@@ -1,0 +1,50 @@
+version: '0.0.1'
+services:
+  web:
+    container_name: 'web'
+    image: 'fatpaper/fatpaper-web:0.0.2'
+    build:
+      context: ./
+      dockerfile: dockerfile-web
+    ports:
+      - "80:80"
+      - "81:81"
+      - "82:82"
+    restart: always
+  user-server:
+    container_name: 'user-server'
+    image: 'fatpaper/fatpaper-user-server:0.0.1'
+    build:
+      context: ./
+      dockerfile: dockerfile-user-server
+    ports:
+      - "83:83"
+    depends_on:
+      - mysql
+    restart: always
+  monopoly-server:
+    container_name: 'monopoly-server'
+    image: 'fatpaper/fatpaper-monopoly-server:0.0.1'
+    build:
+      context: ./
+      dockerfile: dockerfile-monopoly-server
+    ports:
+      - "84:84"
+      - "85:85"
+    depends_on:
+      - user-server
+      - mysql
+    restart: always
+  mysql:
+    image: 'mysql:latest'
+    container_name: 'mysql'
+    command:
+      - --default_authentication_plugin=mysql_native_password
+    volumes:
+      - ./conf/sql/:/docker-entrypoint-initdb.d/
+      - ./conf/my.cnf:/etc/my.cnf
+    environment:
+      - "MYSQL_ROOT_PASSWORD=root"
+    ports:
+      - "1028:3306"
+    restart: always

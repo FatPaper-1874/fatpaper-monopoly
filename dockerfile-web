@@ -1,0 +1,35 @@
+#处理fatpaper-login
+FROM node:16-alpine AS fatpaper-login-build
+WORKDIR /app
+
+COPY ./global.config.ts /app
+COPY ./fatpaper-login /app/fatpaper-login
+RUN cd /app/fatpaper-login && npm install && npm run build
+
+#处理monopoly-client
+FROM node:16-alpine AS monopoly-client-build
+WORKDIR /app
+
+COPY ./global.config.ts /app
+COPY ./monopoly-client /app/monopoly-client
+RUN cd /app/monopoly-client && npm install && npm run build
+
+#处理monopoly-admin
+FROM node:16-alpine AS monopoly-admin-build
+WORKDIR /app
+
+COPY ./global.config.ts /app
+COPY ./monopoly-admin /app/monopoly-admin
+RUN cd /app/monopoly-admin && npm install && npm run build
+
+#部署nginx
+FROM nginx:stable-alpine
+
+COPY --from=fatpaper-login-build /app/fatpaper-login/dist /var/www/fatpaper-login/
+COPY --from=monopoly-client-build /app/monopoly-client/dist /var/www/monopoly-client/
+COPY --from=monopoly-admin-build /app/monopoly-admin/dist /var/www/monopoly-admin/
+COPY conf/nginx.conf /etc/nginx/nginx.conf
+EXPOSE 80
+EXPOSE 81
+EXPOSE 82
+CMD ["nginx", "-g", "daemon off;"]
