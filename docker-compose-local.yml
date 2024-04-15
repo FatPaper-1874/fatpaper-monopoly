@@ -3,6 +3,8 @@ services:
   web:
     container_name: "web"
     image: "fatpaper/fatpaper-web:0.0.2"
+    environment:
+      - COMPOSE_PARALLEL_LIMIT=1
     build:
       context: ./
       dockerfile: dockerfile-web
