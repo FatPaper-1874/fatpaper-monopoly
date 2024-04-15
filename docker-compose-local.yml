@@ -20,7 +20,8 @@ services:
     ports:
       - "83:83"
     depends_on:
-      - mysql
+      mysql:
+        condition: service_healthy
     restart: always
   monopoly-server:
     container_name: 'monopoly-server'
@@ -32,8 +33,10 @@ services:
       - "84:84"
       - "85:85"
     depends_on:
-      - user-server
-      - mysql
+      mysql:
+        condition: service_healthy
+      user-server:
+        condition: service_healthy
     restart: always
   mysql:
     image: 'mysql:latest'
@@ -48,3 +51,6 @@ services:
     ports:
       - "1028:3306"
     restart: always
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot" ]
+      retries: 10
