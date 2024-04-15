@@ -3,12 +3,10 @@ FROM node:16-alpine
 WORKDIR .
 COPY ./global.config.ts .
 
-WORKDIR /fatpaper-user-server
-COPY ./user-server-health-check.js .
-COPY ./fatpaper-user-server .
+WORKDIR /monopoly-server
+COPY ./monopoly-server .
 RUN npm config set registry https://registry.npmjs.org/ && npm install
 
-HEALTHCHECK --interval=5s --timeout=5s  --retries=10 CMD node user-server-health-check.js
-
-EXPOSE 83
+EXPOSE 84
+EXPOSE 85
 CMD ["npm", "run", "start"]
