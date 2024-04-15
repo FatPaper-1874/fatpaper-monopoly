@@ -6,8 +6,6 @@ services:
     build:
       context: ./
       dockerfile: dockerfile-web
-      environment:
-        - COMPOSE_PARALLEL_LIMIT=1
     ports:
       - "80:80"
       - "81:81"
