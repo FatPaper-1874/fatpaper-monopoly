@@ -1,5 +1,4 @@
 version: "0.0.1"
-env_file: ./docker-compose-local.env
 services:
   web:
     container_name: "web"
