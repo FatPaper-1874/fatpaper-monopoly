@@ -6,7 +6,7 @@ COPY ./global.config.ts /app
 # 构建 monoploy-admin
 FROM base AS monopoly-admin-build
 COPY ./monopoly-admin /app/monopoly-admin
-RUN cd /app/monopoly-admin && npm install && npm run build
+RUN cd /app/monopoly-admin && npm install && npm run fix-memory-limit && npm run build
 
 # 构建 fatpaper-login
 FROM base AS fatpaper-login-build
