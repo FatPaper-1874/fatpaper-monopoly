@@ -1,30 +1,25 @@
-#处理monopoly-admin
-FROM node:16-alpine AS monopoly-admin-build
+# 基础镜像，包含了共享的操作
+FROM node:16-alpine AS base
 WORKDIR /app
-
 COPY ./global.config.ts /app
+
+# 构建 monoploy-admin
+FROM base AS monopoly-admin-build
 COPY ./monopoly-admin /app/monopoly-admin
 RUN cd /app/monopoly-admin && npm install && npm run build
 
-#处理fatpaper-login
-FROM node:16-alpine AS fatpaper-login-build
-WORKDIR /app
-
-COPY ./global.config.ts /app
+# 构建 fatpaper-login
+FROM base AS fatpaper-login-build
 COPY ./fatpaper-login /app/fatpaper-login
 RUN cd /app/fatpaper-login && npm install && npm run build
 
-#处理monopoly-client
-FROM node:16-alpine AS monopoly-client-build
-WORKDIR /app
-
-COPY ./global.config.ts /app
+# 构建 monoploy-client
+FROM base AS monopoly-client-build
 COPY ./monopoly-client /app/monopoly-client
 RUN cd /app/monopoly-client && npm install && npm run build
 
-#部署nginx
+# 部署 nginx
 FROM nginx:stable-alpine
-
 COPY --from=fatpaper-login-build /app/fatpaper-login/dist /var/www/fatpaper-login/
 COPY --from=monopoly-client-build /app/monopoly-client/dist /var/www/monopoly-client/
 COPY --from=monopoly-admin-build /app/monopoly-admin/dist /var/www/monopoly-admin/
