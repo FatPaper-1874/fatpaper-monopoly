@@ -20,7 +20,6 @@ WORKDIR /app
 
 COPY ./global.config.ts /app
 COPY ./monopoly-admin /app/monopoly-admin
-RUN npm install -g increase-memory-limit cross-env && node --max_old_space_size=4096 
 RUN cd /app/monopoly-admin && npm install && npm run build
 
 #部署nginx
