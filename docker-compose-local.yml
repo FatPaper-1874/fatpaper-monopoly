@@ -1,8 +1,9 @@
-version: '0.0.1'
+version: "0.0.1"
+env_file: ./docker-compose-local.env
 services:
   web:
-    container_name: 'web'
-    image: 'fatpaper/fatpaper-web:0.0.2'
+    container_name: "web"
+    image: "fatpaper/fatpaper-web:0.0.2"
     build:
       context: ./
       dockerfile: dockerfile-web
@@ -12,8 +13,8 @@ services:
       - "82:82"
     restart: always
   user-server:
-    container_name: 'user-server'
-    image: 'fatpaper/fatpaper-user-server:0.0.1'
+    container_name: "user-server"
+    image: "fatpaper/fatpaper-user-server:0.0.1"
     build:
       context: ./
       dockerfile: dockerfile-user-server
@@ -24,8 +25,8 @@ services:
         condition: service_healthy
     restart: always
   monopoly-server:
-    container_name: 'monopoly-server'
-    image: 'fatpaper/fatpaper-monopoly-server:0.0.1'
+    container_name: "monopoly-server"
+    image: "fatpaper/fatpaper-monopoly-server:0.0.1"
     build:
       context: ./
       dockerfile: dockerfile-monopoly-server
@@ -39,8 +40,8 @@ services:
         condition: service_healthy
     restart: always
   mysql:
-    image: 'mysql:latest'
-    container_name: 'mysql'
+    image: "mysql:latest"
+    container_name: "mysql"
     command:
       - --default_authentication_plugin=mysql_native_password
     volumes:
@@ -52,5 +53,5 @@ services:
       - "1028:3306"
     restart: always
     healthcheck:
-      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot" ]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
       retries: 10
