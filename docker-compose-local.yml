@@ -1,4 +1,6 @@
 version: "0.0.1"
+environment:
+  TZ: Asia/Shanghai
 services:
   web:
     container_name: "web"
