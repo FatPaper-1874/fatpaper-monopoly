@@ -1,10 +1,8 @@
-version: "0.0.1"
-environment:
-  TZ: Asia/Shanghai
+version: '0.0.1'
 services:
   web:
-    container_name: "web"
-    image: "fatpaper/fatpaper-web:0.0.2"
+    container_name: 'web'
+    image: 'fatpaper/fatpaper-web:0.0.2'
     build:
       context: ./
       dockerfile: dockerfile-web
@@ -13,9 +11,14 @@ services:
       - "81:81"
       - "82:82"
     restart: always
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
   user-server:
-    container_name: "user-server"
-    image: "fatpaper/fatpaper-user-server:0.0.1"
+    container_name: 'user-server'
+    image: 'fatpaper/fatpaper-user-server:0.0.1'
     build:
       context: ./
       dockerfile: dockerfile-user-server
@@ -25,9 +28,14 @@ services:
       mysql:
         condition: service_healthy
     restart: always
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
   monopoly-server:
-    container_name: "monopoly-server"
-    image: "fatpaper/fatpaper-monopoly-server:0.0.1"
+    container_name: 'monopoly-server'
+    image: 'fatpaper/fatpaper-monopoly-server:0.0.1'
     build:
       context: ./
       dockerfile: dockerfile-monopoly-server
@@ -40,19 +48,27 @@ services:
       user-server:
         condition: service_healthy
     restart: always
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
   mysql:
-    image: "mysql:latest"
-    container_name: "mysql"
+    image: 'mysql:latest'
+    container_name: 'mysql'
     command:
       - --default_authentication_plugin=mysql_native_password
     volumes:
       - ./conf/sql/:/docker-entrypoint-initdb.d/
       - ./conf/my.cnf:/etc/my.cnf
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     environment:
       - "MYSQL_ROOT_PASSWORD=root"
+      - TZ=Asia/Shanghai
     ports:
       - "1028:3306"
     restart: always
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot" ]
       retries: 10
