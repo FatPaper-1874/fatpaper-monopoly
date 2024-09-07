@@ -1,4 +1,5 @@
 FROM node:16-alpine
+RUN npm config set registry https://registry.npmmirror.com/
 
 WORKDIR .
 COPY ./tencent-cloud.ts .
@@ -6,7 +7,7 @@ COPY ./global.config.ts .
 
 WORKDIR /monopoly-server
 COPY ./monopoly-server .
-RUN npm config set registry https://registry.npmjs.org/ && npm install
+RUN npm install
 
 EXPOSE 84
 EXPOSE 85

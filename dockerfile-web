@@ -2,6 +2,7 @@
 FROM node:16-alpine AS base
 WORKDIR /app
 COPY ./global.config.ts /app
+RUN npm config set registry https://registry.npmmirror.com/
 
 # 构建 monoploy-admin
 FROM base AS monopoly-admin-build
