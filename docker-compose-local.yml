@@ -69,7 +69,7 @@ services:
       - MYSQL_ROOT_PASSWORD=root
       - TZ=Asia/Shanghai
     ports:
-      - "1028:3306"
+      - "3306:3306"
     restart: always
     healthcheck:
       test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot" ]

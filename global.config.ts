@@ -1,6 +1,4 @@
-// export const FATPAPER_HOST = "fatpaper.site";
 export const FATPAPER_HOST = "localhost";
-// export const FATPAPER_HOST = "172.16.2.42";
 
 export const MONOPOLY_CLIENT_PORT = 80;
 export const FATPAPER_LOGIN_PORT = 81;
