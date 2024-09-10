@@ -4,10 +4,18 @@ Fatpaper 联机大富翁
 大富翁总项目，使用子模块引用各个大富翁部分，支持使用docker运行项目。
 >全局配置请到根目录的`global.config.ts`中修改。
 
+#### 注意⚠️
+在非localhost网络环境下部署时需要将`global.config.ts`里的`FATPAPER_HOST`修改为对应的地址或域名。
+
 #### 拉取项目
 要连着子模块一起拉取到本地，
 ```
 git clone --recursive https://github.com/FatPaper-1874/fatpaper-monopoly.git
+```
+
+子模块更新
+```
+git submodule update --remote
 ```
 #### 文件目录结构
 子模块的目录结构在子模块中
