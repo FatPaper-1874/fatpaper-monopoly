@@ -10,7 +10,6 @@
 	path = fatpaper-user-server
 	url = https://github.com/FatPaper-1874/fatpaper-user-server.git
 	branch = main
-	branch = main
 [submodule "fatpaper-login"]
 	path = fatpaper-login
 	url = https://github.com/FatPaper-1874/fatpaper-login.git
