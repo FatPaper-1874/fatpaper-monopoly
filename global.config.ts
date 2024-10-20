@@ -1,5 +1,5 @@
 export const FATPAPER_DOMAIN = "localhost"; //域名: 登录跳转的时候会用到
-export const PROTOCOL = "http"; //协议: http https
+export const PROTOCOL: "http" | "https" = "http"; //协议: http https
 export const USE_PORT = true; //默认启用端口模式
 
 export const MONOPOLY_CLIENT_PORT = 80;
