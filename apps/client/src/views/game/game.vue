@@ -36,6 +36,7 @@
 	import { storeToRefs } from "pinia";
 	import UiRenderer from "@src/components/utils/ui-renderer/ui-renderer.vue";
 	import FpErrorBoundary from "@src/components/utils/fp-error-boundary/index.vue";
+	import { CollapsiblePanel } from "@src/components/collapsible-panel";
 	//pinia仓库
 	const mapDataStore = useMapData();
 	const userInfoStore = useUserInfo();
@@ -231,18 +232,26 @@
 		<div class="game-page">
 			<canvas id="game-canvas" :width="windowWidth" :height="windowHeight"></canvas>
 			<div class="ui-container">
-				<UiRenderer
+				<CollapsiblePanel
 					v-for="ui in mapDataStore.customUIs"
-					:schema="getUiTemplateById(ui.uiSchema)"
-					:context="{
+					:key="ui.id"
+					mode="slide"
+					edge="auto"
+					grip-side="inside"
+					z-index="var(--z-ui)"
+					class="custom-ui-collapsible"
+					:style="{
+						gridArea: `${ui.layout.y + 1} / ${ui.layout.x + 1} / span ${ui.layout.height} / span ${ui.layout.width}`,
+					}"
+				>
+					<UiRenderer
+						:schema="getUiTemplateById(ui.uiSchema)"
+						:context="{
 							...gameDataState,
 							currentPlayer: gameDataStore.myGameInfo
 						}"
-					:style="{
-						gridArea: `${ui.layout.y + 1} / ${ui.layout.x + 1} / span ${ui.layout.height} / span ${ui.layout.width}`,
-						zIndex: `var(--z-ui)`,
-					}"
-				/>
+					/>
+				</CollapsiblePanel>
 
 				<PlayerContainer />
 
@@ -315,6 +324,14 @@
 	display: grid;
 	grid-template-columns: repeat(32, 1fr);
 	grid-template-rows: repeat(20, 1fr);
+
+	/* 自定义 UI 收放容器：grid item 定位上下文（把手 absolute 相对它）；
+	   显式 height: 100% 让面板高度固定为网格单元（grid item 百分比高相对网格区域），
+	   保证内部 height: 100% 链路生效、内容不撑破单元格 */
+	.custom-ui-collapsible {
+		position: relative;
+		height: 100%;
+	}
 
 	.ui-item {
 		position: absolute;

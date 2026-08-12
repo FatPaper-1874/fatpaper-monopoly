@@ -5,6 +5,7 @@ import PlayerCard from "./player-card.vue";
 import { PlayerInfo } from "@mine-monopoly/types";
 import FpDialog from "@src/components/utils/fp-dialog/fp-dialog.vue";
 import PlayerDetail from "./player-detail.vue";
+import { CollapsiblePanel } from "@src/components/collapsible-panel";
 
 const gameInfoStore = useGameData();
 const _playersList = computed(() => gameInfoStore.players);
@@ -27,30 +28,43 @@ function handleShowPlayerDetail(player: PlayerInfo) {
 		<PlayerDetail #default v-if="currentPlayer" :player="currentPlayer" />
 	</FpDialog>
 
-	<div class="player-container">
-		<div class="tips">点击玩家卡片查看底细</div>
-		<PlayerCard
-			:id="`player-card-${player.id}`"
-			@click="handleShowPlayerDetail(player)"
-			v-for="player in _playersList"
-			:key="player.id"
-			:player="player"
-			:round-mark="player.id === roundTurnPlayerId"
-		></PlayerCard>
-	</div>
+	<CollapsiblePanel
+		mode="slide"
+		edge="right"
+		z-index="var(--z-ui)"
+		class="player-container"
+	>
+		<div class="player-list">
+			<div class="tips">点击玩家卡片查看底细</div>
+			<PlayerCard
+				:id="`player-card-${player.id}`"
+				@click="handleShowPlayerDetail(player)"
+				v-for="player in _playersList"
+				:key="player.id"
+				:player="player"
+				:round-mark="player.id === roundTurnPlayerId"
+			></PlayerCard>
+		</div>
+	</CollapsiblePanel>
 </template>
 
 <style lang="scss" scoped>
+/* slide 模式：定位由宿主提供 */
 .player-container {
-	display: flex;
-	flex-direction: column;
-	justify-content: space-around;
-	align-items: center;
 	position: absolute;
 	top: 4.2rem;
 	right: 0;
 	margin-right: 0.8rem;
 	z-index: var(--z-ui);
+}
+
+.player-list {
+	display: flex;
+	flex-direction: column;
+	justify-content: space-around;
+	align-items: center;
+	max-height: calc(100vh - 5rem);
+	overflow-y: auto;
 
 	& > .tips {
 		width: 100%;
@@ -63,13 +77,6 @@ function handleShowPlayerDetail(player: PlayerInfo) {
 		text-shadow: var(--fp-text-shadow-surround-white);
 		margin-bottom: 0.3rem;
 		text-align: center;
-	}
-
-	.fly-money-container {
-		position: "fixed";
-		left: 0;
-		top: 0;
-		z-index: var(--z-ui);
 	}
 }
 </style>

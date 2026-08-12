@@ -11,5 +11,8 @@
 	"license": "ISC",
 	"dependencies": {
 		"pako": "^2.1.0"
+	},
+	"peerDependencies": {
+		"vue": "^3.5.0"
 	}
 }
