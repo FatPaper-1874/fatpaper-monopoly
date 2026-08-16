@@ -51,6 +51,8 @@ const loadingText = computed(() => editorStore.loadingText);
 	width: 100%;
 	height: 100%;
 	position: relative;
+	/* 裁剪超出编辑器区域的 UI（如工具列表收起动画向上滑出），避免盖到顶部 Header */
+	overflow: hidden;
 
 	& > .ui-container {
 		width: 100%;

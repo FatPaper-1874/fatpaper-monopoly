@@ -1,5 +1,14 @@
 # @mine-monopoly/map-editor
 
+## 1.2.3
+
+### Patch Changes
+
+- - **UI 改进**
+    - 顶部工具列表改为可折叠 slide 面板，复刻 client `CollapsiblePanel`，复用 `useCollapsible` 共享逻辑
+    - 支持 dock/slide 双模式与 gripAlign 端到端把手对齐，工具靠右排列，把手为右下角长方形按钮（grip-align=end）
+    - 修复收起动画层级：`map-editor-container` 增加 `overflow:hidden` 裁剪滑出内容，避免工具列表盖过顶部 Header
+
 ## 1.2.2
 
 ### Patch Changes

@@ -2,9 +2,10 @@
 import { CameraMode, OperationMode } from "@src/enums";
 import { message } from "ant-design-vue";
 import { useEditorStore, useMapDataStore } from "@src/stores";
-import { computed, ref, defineAsyncComponent, shallowRef } from "vue";
+import { computed, ref, defineAsyncComponent } from "vue";
 import { eventBus } from "@src/utils/event-bus";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
+import CollapsiblePanel from "@src/components/collapsible-panel/CollapsiblePanel.vue";
 
 const editorStore = useEditorStore();
 
@@ -321,17 +322,19 @@ async function handleScreenshot() {
 		</div>
 
 		<div class="right">
-			<a-space wrap>
-				<a-button
-					v-for="item in toolbarItems"
-					:key="item.key"
-					@click="handleItemClick(item)"
-					:type="activeKey === item.key ? 'primary' : 'default'"
-				>
-					<font-awesome-icon style="margin-right: 5px" :icon="item.icon" />
-					<span>{{ item.text }}</span>
-				</a-button>
-			</a-space>
+			<CollapsiblePanel mode="slide" edge="top" :z-index="1" grip-align="end">
+				<a-space wrap style="justify-content: flex-end">
+					<a-button
+						v-for="item in toolbarItems"
+						:key="item.key"
+						@click="handleItemClick(item)"
+						:type="activeKey === item.key ? 'primary' : 'default'"
+					>
+						<font-awesome-icon style="margin-right: 5px" :icon="item.icon" />
+						<span>{{ item.text }}</span>
+					</a-button>
+				</a-space>
+			</CollapsiblePanel>
 		</div>
 
 		<component v-if="currentComponent" :is="currentComponent" v-model="isModalVisible" />
@@ -348,6 +351,9 @@ async function handleScreenshot() {
 	gap: 10px;
 
 	.left {
+		/* 层级高于右侧工具列表（.right z-index: 1 < .left 2），收起动画滑过时不会盖住操作栏 */
+		position: relative;
+		z-index: 2;
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
@@ -360,11 +366,17 @@ async function handleScreenshot() {
 	}
 
 	& .right {
+		/* 独立 stacking context：隔离面板内部 z-index（CollapsiblePanel 已传低 z-index），
+		   且 .right(1) < .left(2)，保证收起动画时工具列表不盖过左侧操作栏 */
+		position: relative;
+		z-index: 1;
 		flex: 1;
+		display: flex;
+		align-items: stretch;
 
-		& > div {
-			width: 100%;
-			justify-content: end;
+		.cp-slide {
+			flex: 1;
+			min-width: 0;
 		}
 	}
 }
