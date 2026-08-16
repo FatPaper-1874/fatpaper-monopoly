@@ -122,7 +122,12 @@ gameMapRouter.get("/status", apiKeyAuth, async (req, res) => {
 		}
 		const resContent: ResInterface = {
 			status: 200,
-			data: { status: gameMap.status, rejectReason: gameMap.rejectReason, version: gameMap.version },
+			data: {
+				status: gameMap.status,
+				rejectReason: gameMap.rejectReason,
+				version: gameMap.version,
+				changelog: gameMap.changelog ?? [],
+			},
 		};
 		res.status(200).json(resContent);
 	} catch (e: any) {
@@ -167,7 +172,7 @@ gameMapRouter.post(
 	},
 	async (req, res) => {
 		const files = getFiles(req);
-		const { name, version, hash, description } = req.body;
+		const { name, version, hash, description, changelog } = req.body;
 		const serverMapId = req.body["server-map-id"] || req.body.serverMapId;
 
 		if (!(name && version && hash && files["game-map"]?.[0] && files["source-map"]?.[0])) {
@@ -239,6 +244,7 @@ gameMapRouter.post(
 					pendingSourceUrl: uploadResult.sourceUrl ?? null,
 					pendingHash: hash.toString(),
 					pendingVersion: version.toString(),
+					pendingChangelog: changelog?.toString() || null,
 				});
 				await deleteMapUrls([oldPendingUrl, oldPendingSourceUrl, uploadResult.coverUrl ? oldCoverUrl : null]);
 			} else {
@@ -252,6 +258,7 @@ gameMapRouter.post(
 					pendingSourceUrl: uploadResult.sourceUrl ?? null,
 					pendingHash: hash.toString(),
 					pendingVersion: version.toString(),
+					pendingChangelog: changelog?.toString() || null,
 				});
 			}
 
@@ -386,6 +393,8 @@ gameMapRouter.post(
 				author,
 				version: 1,
 				description: description || "",
+				pendingChangelog: null,
+				changelog: [],
 				hash,
 				coverUrl: uploadResult.coverUrl || "",
 				mapUrl: uploadResult.mapUrl,
@@ -435,6 +444,9 @@ gameMapRouter.post(
 				author,
 				version: (oldMap.version || 0) + 1,
 				description: description || "",
+				pendingChangelog: null,
+				// admin 更新已发布地图时保留既有更新日志历史
+				changelog: oldMap.changelog ?? [],
 				hash,
 				coverUrl: uploadResult.coverUrl || "",
 				mapUrl: uploadResult.mapUrl,

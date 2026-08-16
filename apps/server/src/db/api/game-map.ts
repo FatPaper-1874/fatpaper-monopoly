@@ -87,6 +87,8 @@ function withCreatorInfo(gameMap: GameMap) {
 		author: gameMap.author,
 		version: gameMap.version,
 		description: gameMap.description,
+		pendingChangelog: gameMap.pendingChangelog,
+		changelog: gameMap.changelog ?? [],
 		hash: gameMap.hash,
 		coverUrl: gameMap.coverUrl,
 		mapUrl: gameMap.mapUrl,
@@ -136,12 +138,15 @@ export const createPendingGameMap = async (info: {
 	pendingSourceUrl: string | null;
 	pendingHash: string;
 	pendingVersion: string;
+	pendingChangelog: string | null;
 }) => {
 	return await createGameMap({
 		name: info.name,
 		author: info.author,
 		version: 0,
 		description: info.description,
+		pendingChangelog: info.pendingChangelog,
+		changelog: [],
 		hash: "",
 		coverUrl: info.coverUrl,
 		mapUrl: "",
@@ -165,11 +170,13 @@ export const updatePendingGameMap = async (gameMap: GameMap, info: {
 	pendingSourceUrl: string | null;
 	pendingHash: string;
 	pendingVersion: string;
+	pendingChangelog: string | null;
 	author: string;
 }) => {
 	gameMap.name = info.name;
 	gameMap.author = info.author;
 	gameMap.description = info.description;
+	gameMap.pendingChangelog = info.pendingChangelog;
 	if (info.coverUrl !== undefined) gameMap.coverUrl = info.coverUrl;
 	gameMap.pendingUrl = info.pendingUrl;
 	gameMap.pendingSourceUrl = info.pendingSourceUrl;
@@ -192,9 +199,23 @@ export const reviewGameMap = async (id: string, action: "approve" | "reject" | "
 		gameMap.pendingUrl = null;
 		gameMap.pendingSourceUrl = null;
 		gameMap.pendingHash = null;
+		const pendingSemver = gameMap.pendingVersion;
 		gameMap.pendingVersion = null;
 		gameMap.rejectReason = null;
-		gameMap.version = (gameMap.version || 0) + 1;
+		const nextVersion = (gameMap.version || 0) + 1;
+		gameMap.version = nextVersion;
+		// 固化更新日志：非空才追加，避免产生空历史条目
+		if (gameMap.pendingChangelog?.trim()) {
+			const history = gameMap.changelog ?? [];
+			history.push({
+				version: nextVersion,
+				semver: pendingSemver,
+				content: gameMap.pendingChangelog.trim(),
+				createdAt: new Date().toISOString(),
+			});
+			gameMap.changelog = history;
+		}
+		gameMap.pendingChangelog = null;
 		gameMap.status = "published";
 	}
 	if (action === "reject") {
@@ -203,6 +224,7 @@ export const reviewGameMap = async (id: string, action: "approve" | "reject" | "
 		gameMap.pendingSourceUrl = null;
 		gameMap.pendingHash = null;
 		gameMap.pendingVersion = null;
+		gameMap.pendingChangelog = null;
 	}
 	if (action === "offline") {
 		if (gameMap.status !== "published") throw new Error("仅已发布地图可下架");

@@ -1,5 +1,5 @@
 import { env } from "@mine-monopoly/env";
-import type { ApiResponse } from "@mine-monopoly/types";
+import type { ApiResponse, GameMapChangelogEntry } from "@mine-monopoly/types";
 
 const getApiBaseUrl = () => {
 	const protocol = env("PROTOCOL");
@@ -35,7 +35,7 @@ export async function getUploadedMapStatus(apiKey: string, mapId: string) {
 	const response = await fetch(`${getApiBaseUrl()}/game-map/status?mapId=${encodeURIComponent(mapId)}`, {
 		headers: { "X-Api-Key": apiKey },
 	});
-	return parseResponse<{ status: string; rejectReason: string | null; version: number }>(response);
+	return parseResponse<{ status: string; rejectReason: string | null; version: number; changelog: GameMapChangelogEntry[] }>(response);
 }
 
 export function uploadUserMap(

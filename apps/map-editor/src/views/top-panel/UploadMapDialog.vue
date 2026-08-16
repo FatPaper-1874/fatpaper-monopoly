@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { message } from "ant-design-vue";
+import type { GameMapChangelogEntry } from "@mine-monopoly/types";
 import { useMapDataStore, useResourceStore, useVersionStore } from "@src/stores";
 import { buildFpmapBuffer, exportGameMapToProductBuffer } from "@src/utils/file";
 import { DEFAULT_MAP_UPLOAD_DAILY_LIMIT, DEFAULT_MAP_UPLOAD_SIZE_LIMIT_MB, getMapKeyInfo, getUploadedMapStatus, sha256Hex, uploadUserMap } from "@src/utils/map-upload";
@@ -13,7 +14,7 @@ const versionStore = useVersionStore();
 
 const apiKey = ref(localStorage.getItem("map-upload-api-key") || "");
 const keyInfo = ref<{ username: string; quota: number | null; used: number; uploadSizeLimit: number | null; dailyUploadLimit: number | null; todayUploaded: number } | null>(null);
-const mapStatus = ref<{ status: string; rejectReason: string | null; version: number } | null>(null);
+const mapStatus = ref<{ status: string; rejectReason: string | null; version: number; changelog: GameMapChangelogEntry[] } | null>(null);
 const mapLinkError = ref<string | null>(null);
 const clearingLink = ref(false);
 const loadingInfo = ref(false);
@@ -110,6 +111,7 @@ async function refreshInfo() {
 	if (mapDataStore.serverMapId) {
 		try {
 			mapStatus.value = await getUploadedMapStatus(apiKey.value.trim(), mapDataStore.serverMapId);
+			await syncChangelogFromServer(mapStatus.value.changelog ?? []);
 		} catch (e: any) {
 			mapStatus.value = null;
 			if (e?.status === 404) {
@@ -124,6 +126,34 @@ async function refreshInfo() {
 		mapStatus.value = null;
 	}
 	loadingInfo.value = false;
+}
+
+/**
+ * 将服务器已发布的更新日志历史合并写回本地地图文件：
+ * - 按版本号去重追加服务器历史（以服务器为准，仅补缺失条目）
+ * - 若本次待发布日志已固化进服务器历史（内容一致），清空本地草稿
+ */
+async function syncChangelogFromServer(serverLogs: GameMapChangelogEntry[]) {
+	if (!serverLogs || serverLogs.length === 0) return;
+	const localLogs = mapDataStore.info.changelog ?? [];
+	const merged = [...localLogs];
+	for (const entry of serverLogs) {
+		if (!merged.some((l) => l.version === entry.version)) merged.push(entry);
+	}
+	merged.sort((a, b) => a.version - b.version);
+	mapDataStore.info.changelog = merged;
+
+	// 本次待发布日志已被审核通过并固化进历史时，清空本地草稿
+	const pending = (mapDataStore.info.pendingChangelog || "").trim();
+	const latestServer = serverLogs[serverLogs.length - 1];
+	if (pending && latestServer && latestServer.content === pending) {
+		mapDataStore.info.pendingChangelog = "";
+	}
+
+	// 持久化到地图文件（目录格式生效）
+	if (versionStore.isDirFormat && versionStore.mapDir) {
+		await versionStore.saveCurrent("sync: 同步服务器更新日志历史");
+	}
 }
 
 /** 清除当前项目与服务器地图的关联，作为全新地图上传 */
@@ -204,6 +234,7 @@ async function handleUpload() {
 		formData.append("name", mapDataStore.info.name);
 		formData.append("version", mapDataStore.info.version);
 		formData.append("description", mapDataStore.info.description || "");
+		formData.append("changelog", mapDataStore.info.pendingChangelog || "");
 		formData.append("hash", await sha256Hex(mapBuffer));
 		if (mapDataStore.serverMapId) formData.append("server-map-id", mapDataStore.serverMapId);
 
