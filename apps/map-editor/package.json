@@ -2,7 +2,7 @@
 	"name": "@mine-monopoly/map-editor",
 	"author": "Fat_Paper",
 	"description": "Mine-Monopoly的地图编辑器",
-	"version": "1.2.2",
+	"version": "1.2.3",
 	"private": true,
 	"type": "module",
 	"main": "dist-electron/main.js",
