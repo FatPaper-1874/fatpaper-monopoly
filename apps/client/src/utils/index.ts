@@ -292,6 +292,16 @@ export function hexToRgbNormalized(hex: string) {
 	return { r: rNormalized, g: gNormalized, b: bNormalized };
 }
 
+/**
+ * 将字节数格式化为可读大小（B/KB/MB）
+ */
+export function formatBytes(bytes: number): string {
+	if (!bytes || bytes < 0) return "0 B";
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function base64ToFileUrl(base64String: string, type: string) {
 	const binaryString = atob(base64String); // Base64 解码为二进制字符串
 

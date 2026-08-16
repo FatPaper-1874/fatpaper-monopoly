@@ -19,7 +19,6 @@
 	import { useResourceStore, useMapData } from "@src/store/game";
 	import { SaveManager, SaveRecord } from "@src/core/save";
 	import FpPopover from "@src/components/utils/fp-popover/fp-popover.vue";
-	import { arrayBufferToBase64 } from "@mine-monopoly/utils";
 	import CustomForm from "@src/components/utils/custom-form/index.vue";
 	import FpErrorBoundary from "@src/components/utils/fp-error-boundary/index.vue";
 import { vStagger } from "@src/directives";
@@ -311,8 +310,8 @@ import { vStagger } from "@src/directives";
 		});
 		if (!file) return;
 		if (!socketClient) return;
-		//传输需要将地图从ArrayBuffer编码为Base64字符串
-		const mapData = { from: "custom" as const, data: arrayBufferToBase64(file) };
+		// 直接以二进制传输地图文件，避免 Base64 带来的 33% 体积膨胀
+		const mapData = { from: "custom" as const, data: new Uint8Array(file) };
 		socketClient.changeGameMap(mapData);
 		useLoading().showLoading("等待其他玩家确认");
 	}

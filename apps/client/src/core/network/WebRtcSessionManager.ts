@@ -3,6 +3,7 @@ import {
 	AIDecisionConfig,
 	ClientSocketMessage,
 	ServerSocketMessage,
+	SocketMessage,
 	SocketMsgSource,
 	SocketMsgType,
 } from "@mine-monopoly/types";
@@ -37,6 +38,25 @@ export interface WebRtcSessionManagerOptions {
 	onReconnectAttempt?: (attempt: number, strategy: ConnectionStrategy) => void;
 	onHostClosed?: (status: "closed" | "expired") => void;
 	onReconnectCancelled?: () => void;
+}
+
+/** 地图分块二进制包类型标记（与主机端 Room.ts 保持一致） */
+const MAP_CHUNK_BIN_TYPE = 1;
+
+/**
+ * 解析地图分块二进制包
+ * 包格式: [1 字节 type][4 字节 chunkIndex 大端序][chunk 原始字节]
+ * 返回 null 表示不是合法的地图分块包
+ */
+function parseMapChunkBinaryPacket(bytes: Uint8Array): SocketMessage<SocketMsgType.MapChunk, SocketMsgSource.Server> | null {
+	if (bytes.length < 5 || bytes[0] !== MAP_CHUNK_BIN_TYPE) return null;
+	const chunkIndex =
+		(((bytes[1] << 24) | (bytes[2] << 16) | (bytes[3] << 8) | bytes[4]) >>> 0);
+	return {
+		type: SocketMsgType.MapChunk,
+		source: SocketMsgSource.Server,
+		data: { chunkIndex, data: bytes.slice(5) },
+	};
 }
 
 type ReconnectContext = { roomId: string; hostPeerId: string; isReady: () => boolean };
@@ -254,6 +274,16 @@ export class WebRtcSessionManager {
 		connection.on("data", (payload: unknown) => {
 			if (!this.isCurrentConnection(connection, generation)) return;
 			try {
+				// 二进制通道：地图分块包（主机端直传 Uint8Array，接收端为 ArrayBuffer）
+				if (payload instanceof ArrayBuffer || payload instanceof Uint8Array) {
+					const bytes = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+					const mapChunkMsg = parseMapChunkBinaryPacket(bytes);
+					if (mapChunkMsg) {
+						this.options.onMessage(mapChunkMsg);
+						this.emit("message", mapChunkMsg);
+					}
+					return;
+				}
 				const message = JSON.parse(String(payload), (_key, value) =>
 					value === "Infinity" ? Infinity : value === "-Infinity" ? -Infinity : value,
 				) as ServerSocketMessage;
