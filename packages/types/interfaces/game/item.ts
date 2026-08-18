@@ -1,4 +1,5 @@
 import { IPlayer, PlayerInfo, PropertyInfo, UISchema } from "./game-process";
+import { GameMapChangelogEntry } from "./db";
 import { MapEventType } from "../../enums/game/game";
 
 /**
@@ -22,6 +23,12 @@ export interface GameMapInfo {
 
 	/** 地图描述 */
 	description: string;
+
+	/** 当前待发布版本的更新日志（时间轴最顶上的可编辑条目；审核通过后固化进 changelog） */
+	pendingChangelog: string;
+
+	/** 已发布版本的更新日志历史（只读，按版本升序；随地图文件持久化） */
+	changelog: GameMapChangelogEntry[];
 
 	/** 地图编辑器版本 */
 	editorVersion: string;

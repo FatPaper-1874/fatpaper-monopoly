@@ -53,22 +53,15 @@ interface UserInRoom extends UserInRoomInfo {
 /**
  * 地图分块传输状态
  */
-interface ChunkTransferState {
-	/** 总块数 */
-	totalChunks: number;
-	/** 已确认接收的块索引集合 */
-	ackedChunks: Set<number>;
-	/** 当前重试次数 */
-	retryCount: number;
-	/** 超时定时器 ID */
-	chunkTimeoutId: number | null;
-	/** 整体传输超时定时器 ID */
-	transferTimeoutId: number | null;
-	/** 地图数据 */
-	mapInfo: RoomMapInfo;
-	/** 分块数据列表 */
-	chunks: string[];
-}
+/**
+ * 地图分块二进制包类型标记
+ * 包格式: [1 字节 type][4 字节 chunkIndex 大端序][chunk 原始字节]
+ *
+ * 可靠性说明：DataConnection 使用 reliable + ordered 的 RTCDataChannel（SCTP 层自带
+ * 丢包重传与有序投递），PeerJS 内部还会对超过 MTU 的大消息自动分包重组。
+ * 因此应用层无需 ACK/重传协议——按序发完所有块后发送 MapChunkEnd，客机端保证最后收到。
+ */
+const MAP_CHUNK_BIN_TYPE = 1;
 
 export class Room {
 	private mapInfo: RoomMapInfo | undefined;
@@ -98,16 +91,14 @@ export class Room {
 	private safeModeReason: string = "";
 	private lastKnownGameState: HeartbeatData["gameState"] | null = null;
 	private heartbeatTimeout: number | null = null;
-	/** 地图分块传输状态映射（clientId -> 传输状态） */
-	private chunkTransferStates: Map<string, ChunkTransferState> = new Map();
 	/** 分块大小（字节） */
 	private readonly CHUNK_SIZE = 64 * 1024; // 64KB
-	/** 单块超时时间（毫秒） */
-	private readonly CHUNK_TIMEOUT = 5000;
-	/** 整体传输超时时间（毫秒） */
-	private readonly TRANSFER_TIMEOUT = 30000;
-	/** 最大重试次数 */
-	private readonly MAX_RETRY = 3;
+	/** 整体传输超时基础值（毫秒），实际按块数动态计算（下发客机端兜底） */
+	private readonly TRANSFER_TIMEOUT = 60000;
+	/** 每块预估传输时间（毫秒），用于动态整体超时估算（覆盖 TURN 中继等慢链路） */
+	private readonly CHUNK_ESTIMATED_TIME = 3000;
+	/** 整体传输超时上限（毫秒） */
+	private readonly TRANSFER_TIMEOUT_MAX = 300000;
 	private initTimeoutTimer: number | null = null;
 	private initSessionId: string | null = null;
 	// 标记是否正在手动请求快照（避免重复保存）
@@ -1283,127 +1274,48 @@ export class Room {
 	}
 
 	/**
-	 * 将字符串分块
+	 * 将地图原始字节按指定大小切块（按字节而非字符，避免多字节字符被切断）
 	 */
-	private splitIntoChunks(data: string, chunkSize: number): string[] {
-		const chunks: string[] = [];
+	private splitIntoChunks(data: Uint8Array, chunkSize: number): Uint8Array[] {
+		const chunks: Uint8Array[] = [];
 		for (let i = 0; i < data.length; i += chunkSize) {
-			chunks.push(data.slice(i, i + chunkSize));
+			chunks.push(data.slice(i, Math.min(i + chunkSize, data.length)));
 		}
 		return chunks;
 	}
 
 	/**
-	 * 清理传输状态
+	 * 根据块数动态计算整体传输超时
+	 * 传输时间与地图大小线性相关，固定超时会导致大图在完成前被误杀
 	 */
-	private clearTransferState(clientId: string): void {
-		const state = this.chunkTransferStates.get(clientId);
-		if (state) {
-			if (state.chunkTimeoutId) {
-				clearTimeout(state.chunkTimeoutId);
-			}
-			if (state.transferTimeoutId) {
-				clearTimeout(state.transferTimeoutId);
-			}
-			this.chunkTransferStates.delete(clientId);
-		}
+	private calcTransferTimeout(totalChunks: number): number {
+		const estimated = this.TRANSFER_TIMEOUT + totalChunks * this.CHUNK_ESTIMATED_TIME;
+		return Math.min(estimated, this.TRANSFER_TIMEOUT_MAX);
 	}
 
 	/**
-	 * 发送单个分块并设置超时
+	 * 发送单个分块（二进制直传，绕过 JSON/Base64 通道）
+	 * 包格式: [1 字节 type][4 字节 chunkIndex 大端序][chunk 原始字节]
 	 */
-	private sendChunkWithRetry(clientId: string, chunkIndex: number): boolean {
-		const state = this.chunkTransferStates.get(clientId);
-		if (!state || chunkIndex >= state.chunks.length) {
-			return false;
-		}
+	private sendChunk(user: UserInRoom, chunkIndex: number, chunk: Uint8Array): void {
+		const packet = new Uint8Array(5 + chunk.length);
+		packet[0] = MAP_CHUNK_BIN_TYPE;
+		packet[1] = (chunkIndex >>> 24) & 0xff;
+		packet[2] = (chunkIndex >>> 16) & 0xff;
+		packet[3] = (chunkIndex >>> 8) & 0xff;
+		packet[4] = chunkIndex & 0xff;
+		packet.set(chunk, 5);
 
-		const user = this.userList.get(clientId);
-		if (!user || !user.socketClient.open) {
-			this.clearTransferState(clientId);
-			return false;
-		}
-
-		// 发送分块
-		this.sendToClient(
-			user.socketClient,
-			SocketMsgType.MapChunk,
-			{
-				chunkIndex,
-				data: state.chunks[chunkIndex],
-			},
-			undefined,
-		);
-		// 设置单块超时
-		if (state.chunkTimeoutId) {
-			clearTimeout(state.chunkTimeoutId);
-		}
-		state.chunkTimeoutId = window.setTimeout(() => {
-			this.handleChunkTimeout(clientId, chunkIndex);
-		}, this.CHUNK_TIMEOUT);
-
-		return true;
-	}
-
-	/**
-	 * 处理分块超时
-	 */
-	private handleChunkTimeout(clientId: string, chunkIndex: number): void {
-		const state = this.chunkTransferStates.get(clientId);
-		if (!state) return;
-
-		console.warn(`[MapTransfer] Chunk ${chunkIndex} timeout for client ${clientId}`);
-
-		if (state.retryCount < this.MAX_RETRY) {
-			state.retryCount++;
-			console.log(`[MapTransfer] Retrying chunk ${chunkIndex}, attempt ${state.retryCount}`);
-			this.sendChunkWithRetry(clientId, chunkIndex);
-		} else {
-			console.error(`[MapTransfer] Max retries exceeded for client ${clientId}`);
-			this.abortMapTransfer(clientId, "传输超时，请重试");
-		}
-	}
-
-	/**
-	 * 中止地图传输
-	 */
-	private abortMapTransfer(clientId: string, reason: string): void {
-		this.clearTransferState(clientId);
-
-		const user = this.userList.get(clientId);
-		if (user && user.socketClient.open) {
-			this.sendToClient(
-				user.socketClient,
-				SocketMsgType.MapChunkAbort,
-				{ reason },
-			);
-		}
-
-		// 隐藏客机端的 loading
-		if (user) {
-			this.sendToClient(
-				user.socketClient,
-				SocketMsgType.LoadingControl,
-				{ show: false },
-			);
-		}
-	}
-
-	/**
-	 * 处理传输整体超时
-	 */
-	private handleTransferTimeout(clientId: string): void {
-		console.error(`[MapTransfer] Transfer timeout for client ${clientId}`);
-		this.abortMapTransfer(clientId, "传输超时");
+		user.socketClient.send(packet);
 	}
 
 	/**
 	 * 开始分块传输地图数据
+	 * 一次性按序发出所有块，随后发送 MapChunkEnd。
+	 * DataChannel 为 reliable + ordered（SCTP 层保证丢包重传与有序投递），
+	 * MapChunkEnd 必然在所有块之后到达客机端，无需应用层 ACK/重传。
 	 */
 	private startMapChunkTransfer(clientId: string, mapInfo: RoomMapInfo): void {
-		// 清理现有状态
-		this.clearTransferState(clientId);
-
 		// 只对自定义地图进行分块传输
 		if (mapInfo.from !== "custom") {
 			// 服务器地图直接发送原消息
@@ -1414,35 +1326,17 @@ export class Room {
 			return;
 		}
 
-		// 提取地图数据
-		const mapData = mapInfo.data;
-		const chunks = this.splitIntoChunks(mapData, this.CHUNK_SIZE);
-
-		// 创建传输状态
-		const state: ChunkTransferState = {
-			totalChunks: chunks.length,
-			ackedChunks: new Set(),
-			retryCount: 0,
-			chunkTimeoutId: null,
-			transferTimeoutId: null,
-			mapInfo,
-			chunks,
-		};
-
-		this.chunkTransferStates.set(clientId, state);
-
-		// 设置整体传输超时
-		state.transferTimeoutId = window.setTimeout(() => {
-			this.handleTransferTimeout(clientId);
-		}, this.TRANSFER_TIMEOUT);
-
-		// 发送 MapChunkStart
 		const user = this.userList.get(clientId);
 		if (!user || !user.socketClient.open) {
-			this.clearTransferState(clientId);
 			return;
 		}
 
+		// 提取地图数据（兼容旧版 Base64 字符串与新版二进制）
+		const mapData = mapInfo.data;
+		const raw = typeof mapData === "string" ? new Uint8Array(base64ToArrayBuffer(mapData)) : mapData;
+		const chunks = this.splitIntoChunks(raw, this.CHUNK_SIZE);
+
+		// 发送 MapChunkStart（附带动态整体超时与总大小，供客机端兜底/展示进度）
 		this.sendToClient(
 			user.socketClient,
 			SocketMsgType.MapChunkStart,
@@ -1450,51 +1344,23 @@ export class Room {
 				totalChunks: chunks.length,
 				chunkSize: this.CHUNK_SIZE,
 				mapInfo: { from: "custom" as const },
+				transferTimeout: this.calcTransferTimeout(chunks.length),
+				totalBytes: raw.byteLength,
 			},
 		);
 
-		// 开始发送第一个分块
-		this.sendChunkWithRetry(clientId, 0);
-	}
-
-	/**
-	 * 处理分块接收确认（对外公开，由 client-message-handlers 调用）
-	 */
-	public handleChunkAck(clientId: string, chunkIndex: number): void {
-		const state = this.chunkTransferStates.get(clientId);
-		if (!state) return;
-
-		state.ackedChunks.add(chunkIndex);
-		state.retryCount = 0; // 重置重试计数
-
-		// 重置整体传输超时（只要有进度就延长时间）
-		if (state.transferTimeoutId) {
-			clearTimeout(state.transferTimeoutId);
+		// 流水线：按序发送所有块
+		for (let i = 0; i < chunks.length; i++) {
+			this.sendChunk(user, i, chunks[i]);
 		}
-		state.transferTimeoutId = window.setTimeout(() => {
-			this.handleTransferTimeout(clientId);
-		}, this.TRANSFER_TIMEOUT);
 
-		// 检查是否所有块都已确认
-		if (state.ackedChunks.size === state.totalChunks) {
-			// 发送 MapChunkEnd
-			const user = this.userList.get(clientId);
-			if (user && user.socketClient.open) {
-				this.sendToClient(
-					user.socketClient,
-					SocketMsgType.MapChunkEnd,
-					{ success: true },
-				);
-			}
-			this.clearTransferState(clientId);
-			console.log(`[MapTransfer] Transfer complete for client ${clientId}`);
-		} else {
-			// 发送下一个未确认的块
-			const nextChunkIndex = state.chunks.findIndex((_, i) => !state.ackedChunks.has(i));
-			if (nextChunkIndex !== -1) {
-				this.sendChunkWithRetry(clientId, nextChunkIndex);
-			}
-		}
+		// MapChunkEnd 在所有块之后发送，DataChannel 有序投递保证其最后到达
+		this.sendToClient(
+			user.socketClient,
+			SocketMsgType.MapChunkEnd,
+			{ success: true },
+		);
+		console.log(`[MapTransfer] Sent ${chunks.length} chunks to client ${clientId}`);
 	}
 
 	public requestSave(): void {
@@ -1528,11 +1394,6 @@ export class Room {
 	}
 
 	public destory() {
-		// 清理所有传输状态
-		this.chunkTransferStates.forEach((_, clientId) => {
-			this.clearTransferState(clientId);
-		});
-		this.chunkTransferStates.clear();
 		this.clearHeartbeatTimer();
 		this.clearInitTimeout();
 		if (this.gameProcessWorker) {

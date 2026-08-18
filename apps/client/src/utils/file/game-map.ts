@@ -5,9 +5,38 @@ import { env } from "@mine-monopoly/env";
 import { useLoading, useSettig } from "@src/store";
 import { getGameMapById } from "../api/map";
 import { useMapData, useResourceStore } from "@src/store/game";
+import { formatBytes } from "@src/utils";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { getDracoLoader } from "../draco/draco";
 
+/**
+ * 流式下载地图文件并显示进度（已下载/总大小）
+ * 通过 Content-Length 获取总大小；服务器未返回时仅显示已下载大小
+ */
+async function downloadMapFile(url: string): Promise<ArrayBuffer> {
+	const response = await fetch(url);
+	if (!response.ok) {
+		throw new Error(`地图文件下载失败 (HTTP ${response.status})`);
+	}
+	const total = Number(response.headers.get("content-length") || 0);
+	const reader = response.body!.getReader();
+	const chunks: BlobPart[] = [];
+	let received = 0;
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		if (value) {
+			// 转为独立 ArrayBuffer 视图，满足 BlobPart 的 Uint8Array<ArrayBuffer> 类型要求
+			chunks.push(new Uint8Array(value));
+			received += value.byteLength;
+			const text = total > 0
+				? `正在读取地图... ${formatBytes(received)} / ${formatBytes(total)} (${((received / total) * 100).toFixed(0)}%)`
+				: `正在读取地图... ${formatBytes(received)}`;
+			useLoading().showLoading(text, total > 0 ? (received / total) * 100 : 0);
+		}
+	}
+	return new Blob(chunks).arrayBuffer();
+}
 
 async function loadFromProductFile(data: Uint8Array, key: string): Promise<{
 	id: string;
@@ -74,16 +103,14 @@ export async function getGameMap(gameMapInfo: GameMapInDb) {
 		if (cached) {
 			arrayBuffer = cached;
 		} else {
-			const response = await fetch(gameMapInfo.mapUrl);
-			arrayBuffer = await response.arrayBuffer();
+			arrayBuffer = await downloadMapFile(gameMapInfo.mapUrl);
 			// 读取用户设置的最大缓存（幂等：从 localStorage 同步最新值）
 			useSettig().initMapCacheMaxSize();
 			const maxSizeBytes = useSettig().mapCacheMaxSizeMB * 1024 * 1024;
 			await platform.saveMapCache(gameMapInfo.id, gameMapInfo.hash, arrayBuffer, maxSizeBytes);
 		}
 	} else {
-		const response = await fetch(gameMapInfo.mapUrl);
-		arrayBuffer = await response.arrayBuffer();
+		arrayBuffer = await downloadMapFile(gameMapInfo.mapUrl);
 	}
 
 	const bytes = new Uint8Array(arrayBuffer);
@@ -137,6 +164,8 @@ export async function loadGameMapFromFile(file: ArrayBuffer) {
 		author: gameMap.info.author,
 		version: 0,
 		description: gameMap.info.description,
+		pendingChangelog: gameMap.info.pendingChangelog ?? "",
+		changelog: gameMap.info.changelog ?? [],
 		hash: "",
 		coverUrl: coverResource.url,
 		mapUrl: "",

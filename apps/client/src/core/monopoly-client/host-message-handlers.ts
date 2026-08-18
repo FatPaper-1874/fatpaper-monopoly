@@ -23,7 +23,7 @@ import {
 	useUserList,
 	useUtil,
 } from "@src/store";
-import { debounce, getDisplayValueByFormSchema } from "@src/utils";
+import { debounce, formatBytes, getDisplayValueByFormSchema } from "@src/utils";
 import { SocketMsgSource } from "@mine-monopoly/types";
 import { FPMessage } from "@mine-monopoly/ui";
 import { FPMessageBox } from "@src/components/utils/fp-message-box";
@@ -43,21 +43,38 @@ import { MapChunkStartData, MapChunkData, MapChunkEndData, MapChunkAbortData, Ro
 /** 地图分块接收状态 */
 interface ChunkReceiveState {
 	totalChunks: number;
-	receivedChunks: Map<number, string>;
-	startTime: number;
-	mapInfo: RoomMapInfo;
+	/** 地图数据总大小（字节） */
+	totalBytes: number;
+	/** 已接收数据大小（字节） */
+	receivedBytes: number;
+	receivedChunks: Map<number, Uint8Array>;
 	transferTimeoutId: number | null;
 	chunkTimeoutId: number | null;
+	/** 上次更新进度的 5% 桶（用于降频 UI 更新） */
+	lastProgressBucket: number;
 }
 
 /** 当前接收状态 */
 let receiveState: ChunkReceiveState | null = null;
 
-/** 整体传输超时（毫秒） */
-const TRANSFER_TIMEOUT = 30000;
+/** 整体传输超时基础值（毫秒），实际按块数动态计算（与主机端一致） */
+const TRANSFER_TIMEOUT = 60000;
 
-/** 块超时（毫秒） */
-const CHUNK_TIMEOUT = 10000;
+/** 每块预估传输时间（毫秒），用于动态整体超时估算（覆盖 TURN 中继等慢链路） */
+const CHUNK_ESTIMATED_TIME = 3000;
+
+/** 整体传输超时上限（毫秒） */
+const TRANSFER_TIMEOUT_MAX = 300000;
+
+/** 块超时（毫秒）：长时间未收到新块判定传输停滞 */
+const CHUNK_TIMEOUT = 20000;
+
+/** 根据块数计算动态整体超时 */
+function calcTransferTimeout(totalChunks: number, provided?: number): number {
+	if (provided) return provided;
+	const estimated = TRANSFER_TIMEOUT + totalChunks * CHUNK_ESTIMATED_TIME;
+	return Math.min(estimated, TRANSFER_TIMEOUT_MAX);
+}
 
 function clearReceiveState(): void {
 	if (receiveState) {
@@ -301,8 +318,13 @@ const handleChangeMapInternal: ServerMessageHandler<SocketMsgType.ChangeMap> = a
 				break;
 			}
 			case "custom": {
-				const dataArrayBuffer = base64ToArrayBuffer(data.data);
-				const res = await loadGameMapFromFile(dataArrayBuffer);
+				// 兼容新版二进制直传与旧版 base64 字符串
+				const raw = data.data;
+				const arrayBuffer =
+					raw instanceof Uint8Array
+						? (raw.slice().buffer as ArrayBuffer)
+						: base64ToArrayBuffer(raw);
+				const res = await loadGameMapFromFile(arrayBuffer);
 				gameMap = res.gameMap;
 				mapInfo = res.mapInfo;
 				break;
@@ -594,6 +616,8 @@ const handlePlayerTp: ServerMessageHandler<SocketMsgType.PlayerTp> = (msg) => {
 };
 
 const handleGameOver: ServerMessageHandler<SocketMsgType.GameOver> = (msg) => {
+	// 游戏结束时清理暂停状态，防止下一局沿用不可关闭的暂停弹窗。
+	useUtil().gamePaused = false;
 	if (msg.msg) useLoading().hideLoading();
 	const gameInfoStore = useGameData();
 	if (msg.data?.returnToRoom) {
@@ -610,12 +634,15 @@ const handleGameOver: ServerMessageHandler<SocketMsgType.GameOver> = (msg) => {
 	if (msg.msg) FPMessage({ type: msg.msg.type, message: msg.msg.content });
 };
 
-const handleGamePause: ServerMessageHandler<SocketMsgType.PauseGame> = () => {
-	useLoading().showLoading("房主摸鱼被发现了，游戏暂停，等待房主回来");
+const handleGamePause: ServerMessageHandler<SocketMsgType.PauseGame> = (msg, client) => {
+	// 只更新状态：暂停弹窗由 game.vue 的 fp-dialog 统一呈现，避免重复 toast
+	const utilStore = useUtil();
+	utilStore.gamePaused = true;
 };
 
 const handleGameResume: ServerMessageHandler<SocketMsgType.ResumeGame> = () => {
-	useLoading().hideLoading();
+	const utilStore = useUtil();
+	utilStore.gamePaused = false;
 };
 
 const handleConfirmDialog: ServerMessageHandler<SocketMsgType.ConfirmDialog> = (msg, client) => {
@@ -864,35 +891,50 @@ const handleMapChunkStart: ServerMessageHandler<SocketMsgType.MapChunkStart> = (
 	clearReceiveState();
 	receiveState = {
 		totalChunks: data.totalChunks,
+		totalBytes: data.totalBytes ?? 0,
+		receivedBytes: 0,
 		receivedChunks: new Map(),
-		startTime: Date.now(),
-		mapInfo: data.mapInfo as RoomMapInfo,
 		transferTimeoutId: window.setTimeout(() => {
 			handleTransferTimeout("传输超时");
-		}, TRANSFER_TIMEOUT),
+		}, calcTransferTimeout(data.totalChunks, data.transferTimeout)),
 		chunkTimeoutId: null,
+		lastProgressBucket: -1,
 	};
-	useLoading().showLoading("地图加载中...", 0);
-	console.log(`[MapTransfer] Started receiving ${data.totalChunks} chunks`);
+	useLoading().showLoading(
+		data.totalBytes ? `地图加载中... 0 B / ${formatBytes(data.totalBytes)}` : "地图加载中...",
+		0,
+	);
+	console.log(`[MapTransfer] Started receiving ${data.totalChunks} chunks (${formatBytes(data.totalBytes ?? 0)})`);
 };
 
-const handleMapChunk: ServerMessageHandler<SocketMsgType.MapChunk> = (msg, client) => {
+const handleMapChunk: ServerMessageHandler<SocketMsgType.MapChunk> = (msg) => {
 	const data = msg.data;
 	if (!receiveState) {
 		console.warn("[MapTransfer] Received chunk without start state");
 		return;
 	}
-	receiveState.receivedChunks.set(data.chunkIndex, data.data);
-	const progress = (receiveState.receivedChunks.size / receiveState.totalChunks) * 100;
-	useLoading().updateProgress(progress);
-	useLoading().showLoading(`地图加载中...`, progress);
+	// 兼容旧版 base64 字符串分块与新版二进制分块
+	const chunkBytes =
+		typeof data.data === "string" ? new TextEncoder().encode(data.data) : data.data;
+	receiveState.receivedChunks.set(data.chunkIndex, chunkBytes);
+	receiveState.receivedBytes += chunkBytes.byteLength;
+	const received = receiveState.receivedChunks.size;
+	const progress = (received / receiveState.totalChunks) * 100;
+	// 进度降频：按 5% 桶更新 UI，避免每块都触发响应式更新
+	const bucket = Math.floor(progress / 5);
+	if (bucket !== receiveState.lastProgressBucket) {
+		receiveState.lastProgressBucket = bucket;
+		useLoading().updateProgress(progress);
+		// 显示已加载/总大小信息（旧版主机未下发 totalBytes 时回退为纯文本）
+		useLoading().showLoading(
+			receiveState.totalBytes
+				? `地图加载中... ${formatBytes(receiveState.receivedBytes)} / ${formatBytes(receiveState.totalBytes)} (${progress.toFixed(0)}%)`
+				: "地图加载中...",
+			progress,
+		);
+	}
+	// DataChannel 可靠有序投递，无需逐块 ACK（避免慢网络下的重传风暴）
 	resetChunkTimeout();
-	client.sendMsg({
-		type: SocketMsgType.MapChunkAck,
-		source: SocketMsgSource.Client,
-		data: { chunkIndex: data.chunkIndex },
-	});
-	console.log(`[MapTransfer] Received chunk ${data.chunkIndex}/${receiveState.totalChunks - 1}, progress: ${progress.toFixed(1)}%`);
 };
 
 const handleMapChunkEnd: ServerMessageHandler<SocketMsgType.MapChunkEnd> = async (msg, client) => {
@@ -909,8 +951,18 @@ const handleMapChunkEnd: ServerMessageHandler<SocketMsgType.MapChunkEnd> = async
 		if (sortedChunks.some((chunk) => chunk === undefined)) {
 			throw new Error("缺少数据分块");
 		}
-		const fullData = sortedChunks.join("");
-		const mapInfo: RoomMapInfo = { ...state.mapInfo, data: fullData };
+		// 按原始字节拼接，直接还原 .mmmap 文件内容，省去 base64 解码
+		let totalLength = 0;
+		for (const chunk of sortedChunks) totalLength += (chunk as Uint8Array).byteLength;
+		const fullData = new Uint8Array(totalLength);
+		let offset = 0;
+		for (const chunk of sortedChunks) {
+			const bytes = chunk as Uint8Array;
+			fullData.set(bytes, offset);
+			offset += bytes.byteLength;
+		}
+		// 分块传输仅用于自定义地图
+		const mapInfo: RoomMapInfo = { from: "custom", data: fullData };
 		await handleChangeMapInternal({ type: SocketMsgType.ChangeMap, source: SocketMsgSource.Server, data: mapInfo } as SocketMessage<SocketMsgType.ChangeMap, SocketMsgSource.Server>, client);
 	} catch (e: any) {
 		logErrorWithOptions({

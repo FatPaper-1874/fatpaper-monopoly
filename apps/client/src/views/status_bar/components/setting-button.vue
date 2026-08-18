@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import FpDialog from "@src/components/utils/fp-dialog/fp-dialog.vue";
-import { useSettig } from "@src/store";
+import { useSettig, useUtil } from "@src/store";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { ref, watch, computed } from "vue";
 import { useRoute } from "vue-router";
@@ -84,6 +84,19 @@ const settingStore = useSettig();
 const route = useRoute();
 const eventBus = useEventBus();
 const audio = useAudioManager();
+const utilStore = useUtil();
+const isGamePaused = computed(() => utilStore.gamePaused);
+
+// 暂停/继续游戏：房主直接执行；其他玩家发送请求由房主代为执行
+function handleTogglePause() {
+	const socketClient = useMonopolyClient();
+	if (!socketClient) return;
+	if (utilStore.gamePaused) {
+		socketClient.resumeGame();
+	} else {
+		socketClient.pauseGame();
+	}
+}
 
 // 画质标签映射
 const qualityLabels = {
@@ -588,10 +601,14 @@ const applySettings = () => {
 					</div>
 				</div>
 
-				<!-- 退出游戏 -->
+				<!-- 游戏控制（暂停/继续、退出） -->
 				<div class="setting-item" v-if="route.name === 'game'">
 					<div class="label">游戏</div>
 					<div class="content">
+						<button @click="handleTogglePause" class="btn-small">
+							<FontAwesomeIcon :icon="isGamePaused ? 'play' : 'pause'" style="margin-right: 0.3rem" />
+							{{ isGamePaused ? "继续游戏" : "暂停游戏" }}
+						</button>
 						<button @click="handleExitGame" class="btn-red">
 							<FontAwesomeIcon icon="right-from-bracket" style="margin-right: 0.3rem" />
 							退出游戏

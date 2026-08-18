@@ -559,6 +559,10 @@ export class GameProcess implements IGameProcess {
 	public currentRoundPlayer: Player | null = null;
 	public currentRound: number = 0; //当前回合
 	private isGameOver: boolean = false;
+	/** 游戏是否处于暂停状态（房主切后台或手动暂停时置位，游戏循环等待恢复信号） */
+	private isGamePaused: boolean = false;
+	/** 暂停期间游戏循环等待恢复的 resolver（游戏循环为单协程，同一时刻至多一个等待者） */
+	private pauseResumeResolve: (() => void) | null = null;
 	private timeoutList: any[] = []; //计时器列表
 	private intervalTimerList: any[] = []; //计时器列表
 	private gameLogList: GameLog[] = [];
@@ -682,30 +686,29 @@ export class GameProcess implements IGameProcess {
 			});
 		});
 
-		if (gameSetting.slackOffMode) {
-			operationListener.on(roomOwnerId, OperateType.PauseGame, () => {
-				console.log("PauseGame");
-				operationListener.pause();
-				this.gameBroadcast(<ServerSocketMessage>{
-					type: SocketMsgType.PauseGame,
-					msg: {
-						type: "info",
-						content: "房主摸鱼被发现了，游戏暂停",
-					},
-				});
+		// 暂停/恢复：房主切后台自动触发(deviceStatus)，也可通过设置界面手动触发
+		operationListener.on(roomOwnerId, OperateType.PauseGame, () => {
+			console.log("PauseGame");
+			this.setGamePaused(true);
+			this.gameBroadcast(<ServerSocketMessage>{
+				type: SocketMsgType.PauseGame,
+				msg: {
+					type: "info",
+					content: "游戏已暂停",
+				},
 			});
-			operationListener.on(roomOwnerId, OperateType.ResumeGame, () => {
-				console.log("ResumeGame");
-				operationListener.resume();
-				this.gameBroadcast(<ServerSocketMessage>{
-					type: SocketMsgType.ResumeGame,
-					msg: {
-						type: "info",
-						content: "房主回来了，游戏继续",
-					},
-				});
+		});
+		operationListener.on(roomOwnerId, OperateType.ResumeGame, () => {
+			console.log("ResumeGame");
+			this.setGamePaused(false);
+			this.gameBroadcast(<ServerSocketMessage>{
+				type: SocketMsgType.ResumeGame,
+				msg: {
+					type: "info",
+					content: "游戏继续",
+				},
 			});
-		}
+		});
 
 		this.preprocessingEffectCode();
 		this.gameRoundPhase = {
@@ -1897,10 +1900,38 @@ export class GameProcess implements IGameProcess {
 		this.gameDataBroadcast();
 	}
 
+	/**
+	 * 暂停/恢复的唯一入口：同步驱动游戏循环检查点与操作定时器，避免多套暂停状态分叉
+	 */
+	public setGamePaused(paused: boolean): void {
+		if (this.isGamePaused === paused) return;
+		this.isGamePaused = paused;
+		if (paused) {
+			operationListener.pause();
+		} else {
+			operationListener.resume();
+			const resolve = this.pauseResumeResolve;
+			this.pauseResumeResolve = null;
+			resolve?.();
+		}
+	}
+
+	/**
+	 * 暂停检查点：暂停期间阻塞游戏循环，直到恢复
+	 */
+	private async waitIfPaused(): Promise<void> {
+		while (this.isGamePaused) {
+			await new Promise<void>((resolve) => {
+				this.pauseResumeResolve = resolve;
+			});
+		}
+	}
+
 	private async gameLoop() {
 		this.gameDataBroadcast();
 		//游戏循环
 		while (!this.isGameOver) {
+			await this.waitIfPaused();
 			//回合循环 加载回合开始阶段
 			this.eventBus.emit("game.round.start");
 			const roundStartPhases = this.gameRoundPhase.roundStartPhase;
@@ -1910,6 +1941,7 @@ export class GameProcess implements IGameProcess {
 
 			//玩家回合
 			for (const player of Array.from(this.players.values())) {
+				await this.waitIfPaused();
 				// 检查玩家是否应该跳过回合
 				if (player.isStop > 0) {
 					const originalStop = player.isStop;

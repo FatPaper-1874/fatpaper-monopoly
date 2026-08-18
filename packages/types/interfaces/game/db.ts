@@ -2,6 +2,23 @@
 export type GameMapStatus = "reviewing" | "published" | "rejected" | "offline";
 
 /**
+ * 地图更新日志条目（每个已发布版本一条，审核通过时固化）
+ */
+export interface GameMapChangelogEntry {
+	/** 已发布版本号（审核通过时 version+1 后的值） */
+	version: number;
+
+	/** 作者提交的语义化版本，可能为 null */
+	semver: string | null;
+
+	/** 日志内容（Markdown） */
+	content: string;
+
+	/** 固化时间（ISO 字符串） */
+	createdAt: string;
+}
+
+/**
  * 数据库游戏地图接口
  * 表示存储在数据库中的游戏地图
  */
@@ -20,6 +37,12 @@ export interface GameMapInDb {
 
 	/** 地图描述 */
 	description: string;
+
+	/** 待审核版本的更新日志（作者本次上传时填写，审核通过后固化进 changelog） */
+	pendingChangelog: string | null;
+
+	/** 已发布版本的更新日志历史（按版本升序，审核通过时追加），列表/详情查询时附带解析后的数组 */
+	changelog: GameMapChangelogEntry[];
 
 	/** 地图哈希值 */
 	hash: string;

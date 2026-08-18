@@ -5,6 +5,14 @@ import { clearAuthAndRedirect, getRefreshToken, setToken, setRefreshToken } from
 import type { ApiResponse } from "@mine-monopoly/types";
 import logService, { ErrorCategory, ErrorLevel } from "@src/utils/log";
 
+// 扩展 axios 配置：允许后台轮询/心跳类请求标记 silent，错误时跳过全局 toast
+declare module "axios" {
+	export interface AxiosRequestConfig {
+		/** 静默模式：请求失败时不通过全局拦截器弹 toast（用于心跳、状态轮询等后台请求） */
+		silent?: boolean;
+	}
+}
+
 // 获取 API 基础 URL
 const getApiBaseUrl = () => {
 	const protocol = env("PROTOCOL");
@@ -234,7 +242,8 @@ apiClient.interceptors.response.use(
 		}
 
 		// 显示错误消息（必须在日志记录之前，防止日志异常导致消息丢失）
-		if (showErrorMessage && message) {
+		// silent 标记的请求（心跳/轮询）失败时不弹 toast，由调用方自行处理
+		if (showErrorMessage && message && !(originalConfig as InternalAxiosRequestConfig | undefined)?.silent) {
 			FPMessage({ type: "error", message });
 		}
 

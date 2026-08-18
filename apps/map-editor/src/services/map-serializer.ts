@@ -21,7 +21,7 @@ import type {
 import type { FormSchema } from "@mine-monopoly/types/interfaces/game/util";
 import type { ModifierTemplate } from "@mine-monopoly/types/interfaces/game/action-system/modifier";
 import { getFsApi, type ExtendedFsAPI } from "./fs-api";
-import { parseGameMapFromProtoFile } from "../utils/file/index";
+import { ensureMapInfoDefaults, parseGameMapFromProtoFile } from "../utils/file/index";
 import { getInitPhase } from "../views/map-editor/components/manager/process-manager/utils/init-phase";
 
 // ─── 类型 ───
@@ -450,6 +450,7 @@ export async function deserializeFromDir(dirPath: string): Promise<DeserializeRe
 	// 组装 GameMap
 	const mapData: GameMap = {
 		...mapJson,
+		info: ensureMapInfoDefaults(mapJson.info),
 		mapIndex,
 		buildingModelIdList,
 		mapItems,

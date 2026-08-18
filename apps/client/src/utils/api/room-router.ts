@@ -6,10 +6,11 @@ export async function joinRoomApi(roomId: string) {
 		hostPeerId: string;
 		needCreate: boolean;
 		deleteIntervalMs: number;
+		heartbeatIntervalMs?: number;
 		iceServers: RTCIceServer[];
 		hostLeaseToken: string;
 		hostEpoch: number;
-	}>(`/room-router/join`, { params: { roomId } });
+	}>(`/room-router/join`, { params: { roomId }, silent: true });
 	return response;
 }
 
@@ -26,11 +27,29 @@ export async function emitHostPeerId(
 		hostName,
 		hostId,
 		hostLeaseToken,
-	});
+	}, { silent: true });
 }
 
 export async function emitRoomHeart(roomId: string, hostLeaseToken: string): Promise<void> {
-	await apiClient.get("/room-router/heart", { params: { roomId, hostLeaseToken } });
+	await apiClient.get("/room-router/heart", { params: { roomId, hostLeaseToken }, silent: true });
+}
+
+/**
+ * 房主夺回房间：租约失效/服务端重启导致注册丢失时，用旧 token 重新激活房间并获取新 token
+ */
+export async function reclaimHostRoom(
+	roomId: string,
+	hostPeerId: string,
+	hostName: string,
+	hostId: string,
+	hostLeaseToken: string,
+): Promise<{ hostLeaseToken: string; hostEpoch: number }> {
+	const response = await apiClient.post<{ hostLeaseToken: string; hostEpoch: number }>(
+		"/room-router/reclaim-host",
+		{ roomId, hostPeerId, hostName, hostId, hostLeaseToken },
+		{ silent: true },
+	);
+	return response.data;
 }
 
 export function deleteRoom(roomId: string, hostLeaseToken?: string) {
@@ -54,7 +73,7 @@ export function deleteRoom(roomId: string, hostLeaseToken?: string) {
 }
 
 export async function getRoomSessionStatus(roomId: string) {
-	return apiClient.get<{ status: "active" | "closed" | "expired"; hostEpoch: number }>("/room-router/status", { params: { roomId } });
+	return apiClient.get<{ status: "active" | "grace" | "closed" | "expired"; hostEpoch: number }>("/room-router/status", { params: { roomId }, silent: true });
 }
 
 export async function getRandomPublicRoom() {

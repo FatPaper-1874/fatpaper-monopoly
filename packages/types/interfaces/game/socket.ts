@@ -54,7 +54,9 @@ type Base64String = string;
  * 房间地图信息类型
  * 可以从服务器获取或使用自定义数据
  */
-export type RoomMapInfo = { from: "server"; data: string } | { from: "custom"; data: Base64String };
+export type RoomMapInfo =
+	| { from: "server"; data: string }
+	| { from: "custom"; data: Base64String | Uint8Array };
 
 /**
  * Socket 消息接口
@@ -834,6 +836,10 @@ export interface MapChunkStartData {
 	chunkSize: number;
 	/** 地图元信息（不含 data） */
 	mapInfo: Omit<RoomMapInfo, "data">;
+	/** 整体传输超时（毫秒），由主机端按块数动态计算下发 */
+	transferTimeout?: number;
+	/** 地图数据总大小（字节），用于进度条展示 */
+	totalBytes?: number;
 }
 
 /**
@@ -842,8 +848,8 @@ export interface MapChunkStartData {
 export interface MapChunkData {
 	/** 当前块索引 (0-based) */
 	chunkIndex: number;
-	/** base64 编码的分块数据 */
-	data: string;
+	/** 分块数据：二进制直传时为 Uint8Array，兼容旧版 base64 字符串 */
+	data: string | Uint8Array;
 }
 
 /**

@@ -26,6 +26,9 @@ const AllowPath = {
 		"/room-router/emit-host",
 		"/room-router/delete",
 		"/room-router/heart",
+		// 会话状态查询与房主租约夺回依赖 lease token，不应因用户 access token 过期而中断正在进行的 P2P 对局。
+		"/room-router/status",
+		"/room-router/reclaim-host",
 		"/room-router/random-public-room",
 		"/room-router/set-private",
 		"/room-router/set-started",

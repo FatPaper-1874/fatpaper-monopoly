@@ -1,6 +1,8 @@
 import Peer, { DataConnection } from "peerjs";
 import { ClientSocketMessage, SocketMessage, SocketMsgType, UserInRoomInfo } from "@mine-monopoly/types";
-import { deleteRoom, emitRoomHeart } from "@src/utils/api/room-router";
+import { deleteRoom, emitRoomHeart, reclaimHostRoom } from "@src/utils/api/room-router";
+import { FPMessage } from "@mine-monopoly/ui";
+import { useUserInfo } from "@src/store";
 import { __ICE_SERVER_PATH__, __ICE_USE_PREFIX__, __FATPAPER_HOST__ } from "@src/../global.config";
 import { handleClientSocketMessage } from "./client-message-handlers";
 import { Room } from "./Room";
@@ -28,18 +30,27 @@ export class MonopolyHost {
 
 	private destoryHandler: Function | undefined;
 	private hostLeaseToken: string;
+	private readonly hostName: string;
+	private readonly hostId: string;
+	private readonly hostPeerId: string;
 
-	private constructor(peer: Peer, room: Room, heartContinuationTimeMs: number, hostLeaseToken: string) {
+	private constructor(
+		peer: Peer,
+		room: Room,
+		heartContinuationTimeMs: number,
+		registration: { hostLeaseToken: string; hostEpoch: number; hostName: string; hostId: string },
+	) {
 		this.peer = peer;
 		this.room = room;
-		this.hostLeaseToken = hostLeaseToken;
+		this.hostLeaseToken = registration.hostLeaseToken;
+		this.hostName = registration.hostName;
+		this.hostId = registration.hostId;
+		this.hostPeerId = peer.id;
 
 		this.init(this.peer);
 
 		const heartInterval = setInterval(() => {
-			void emitRoomHeart(this.room.getRoomId(), this.hostLeaseToken).catch((error) => {
-				console.warn("[MonopolyHost] 房主租约心跳失败", error);
-			});
+			void this.sendHeartbeat();
 		}, heartContinuationTimeMs);
 		this.intervalList.push(heartInterval);
 
@@ -225,7 +236,7 @@ export class MonopolyHost {
 		});
 	}
 
-	public static async create(roomId: string, host: string, port: number, heartContinuationTimeMs: number, iceServers: RTCIceServer[], registration: { hostLeaseToken: string; hostEpoch: number }) {
+	public static async create(roomId: string, host: string, port: number, heartContinuationTimeMs: number, iceServers: RTCIceServer[], registration: { hostLeaseToken: string; hostEpoch: number; hostName: string; hostId: string }) {
 		const peer = await new Promise<Peer>((resolve) => {
 			const peerOptions = __ICE_USE_PREFIX__
 				? {
@@ -256,7 +267,7 @@ export class MonopolyHost {
 		});
 		const room = new Room(roomId);
 
-		return new MonopolyHost(peer, room, heartContinuationTimeMs, registration.hostLeaseToken);
+		return new MonopolyHost(peer, room, heartContinuationTimeMs, registration);
 	}
 
 	public broadcast(msg: string) {
@@ -285,6 +296,51 @@ export class MonopolyHost {
 		this.clientHeartCheckFns.get(clientId)?.clear();
 	}
 
+	/** 心跳失败连续计数（用于控制提示频率） */
+	private heartbeatFailures = 0;
+
+	/**
+	 * 发送房主租约心跳；失败时尝试夺回房间注册（reclaim），避免"游戏在跑但房间注册永久死亡"
+	 */
+	private async sendHeartbeat(): Promise<{ ok: boolean; reclaimed: boolean; error?: string }> {
+		try {
+			await emitRoomHeart(this.room.getRoomId(), this.hostLeaseToken);
+			this.heartbeatFailures = 0;
+			return { ok: true, reclaimed: false };
+		} catch (error: any) {
+			this.heartbeatFailures++;
+			console.warn("[MonopolyHost] 房主租约心跳失败", error);
+			if (error?.response?.status === 409) {
+				// 租约失效：尝试用旧 token 夺回房间并续上注册
+				try {
+					const reclaimed = await reclaimHostRoom(
+						this.room.getRoomId(),
+						this.hostPeerId,
+						this.hostName,
+						this.hostId,
+						this.hostLeaseToken,
+					);
+					this.hostLeaseToken = reclaimed.hostLeaseToken;
+					this.heartbeatFailures = 0;
+					console.info("[MonopolyHost] 房间注册已恢复");
+					return { ok: true, reclaimed: true };
+				} catch (reclaimError: any) {
+					console.warn("[MonopolyHost] 房间夺回失败", reclaimError);
+					// 连续失败才提示一次，避免心跳失败变成骚扰弹窗
+					if (this.heartbeatFailures === 3) {
+						FPMessage({ type: "warning", message: "房间注册已失效，正在尝试恢复…" });
+					}
+					return { ok: false, reclaimed: false, error: reclaimError?.message || "房间夺回失败" };
+				}
+			}
+			return { ok: false, reclaimed: false, error: error?.message || "房主租约心跳失败" };
+		}
+	}
+
+	/** 仅供开发环境 window.__MM_TEST__ 调用：立即执行一次心跳/夺回流程。 */
+	public async debugSendHeartbeat(): Promise<{ ok: boolean; reclaimed: boolean; error?: string }> {
+		return this.sendHeartbeat();
+	}
 	public resumeClientHeartCheck(clientId: string) {
 		this.clientHeartCheckFns.get(clientId)?.reset();
 	}

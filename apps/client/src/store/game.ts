@@ -44,6 +44,8 @@ export const useMapData = defineStore("map-data", {
 			backgroundImageId: "",
 			coverImageId: "",
 			description: "",
+			pendingChangelog: "",
+			changelog: [],
 		},
 		gameSettingForm: [],
 		mapItems: [],

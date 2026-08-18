@@ -1,5 +1,5 @@
 import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn, Index } from "typeorm";
-import type { GameMapInDb, GameMapStatus } from "@mine-monopoly/types";
+import type { GameMapChangelogEntry, GameMapInDb, GameMapStatus } from "@mine-monopoly/types";
 import { User } from "#src/db/entities/User";
 
 @Entity()
@@ -18,6 +18,14 @@ export class GameMap implements GameMapInDb {
 
 	@Column({ type: "text", nullable: true })
 	description: string;
+
+	/** 待审核版本的更新日志（本次上传时填写，审核通过后固化进 changelog） */
+	@Column({ type: "text", nullable: true })
+	pendingChangelog: string | null;
+
+	/** 已发布版本的更新日志历史（JSON 数组，按版本升序；存量数据为 NULL 时按空数组兜底） */
+	@Column({ type: "json", nullable: true })
+	changelog: GameMapChangelogEntry[];
 
 	@Column({ type: "varchar", nullable: false })
 	coverUrl: string;

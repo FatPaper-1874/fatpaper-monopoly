@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ChanceCardInfo, FormSchema, GameMap, ModifierTemplate, PropertyInfo, UITemplate } from "@mine-monopoly/types";
+import { ChanceCardInfo, FormSchema, GameMap, GameMapChangelogEntry, ModifierTemplate, PropertyInfo, UITemplate } from "@mine-monopoly/types";
 import { CameraMode, OperationMode } from "@src/enums";
 import {
 	MapItem,
@@ -21,7 +21,14 @@ export const useMapDataStore = defineStore("MapData", {
 	state: createDefaultMapData,
 	actions: {
 		// MapInfo
-		updateMapInfo(info: { name: string; author: string; version: SemVer; description: string }) {
+		updateMapInfo(info: {
+			name: string;
+			author: string;
+			version: SemVer;
+			description: string;
+			pendingChangelog: string;
+			changelog: GameMapChangelogEntry[];
+		}) {
 			Object.assign(this.info, info);
 		},
 

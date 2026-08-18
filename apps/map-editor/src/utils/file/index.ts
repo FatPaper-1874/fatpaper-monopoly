@@ -1,4 +1,4 @@
-import { FormSchema, GameMap } from "@mine-monopoly/types";
+import { FormSchema, GameMap, GameMapInfo } from "@mine-monopoly/types";
 import { dataToProtoBuffer, loadFromProto, ProtoFileType, encodeProductMap } from "@mine-monopoly/utils/protos";
 import { encrypt } from "@mine-monopoly/utils/crypto";
 import { gzipCompress, normalizePhases } from "@mine-monopoly/utils";
@@ -26,6 +26,23 @@ function ensureDefaultPhases(mapData: GameMap): void {
 	}
 }
 
+/**
+ * 向后兼容：旧地图文件的 info 可能缺少更新日志字段（pendingChangelog/changelog），补默认值
+ */
+export function ensureMapInfoDefaults(info: Partial<GameMapInfo> | undefined | null): GameMapInfo {
+	return {
+		name: info?.name ?? "",
+		author: info?.author ?? "",
+		version: info?.version ?? "0.0.0",
+		description: info?.description ?? "",
+		pendingChangelog: info?.pendingChangelog ?? "",
+		changelog: info?.changelog ?? [],
+		editorVersion: info?.editorVersion ?? "",
+		backgroundImageId: info?.backgroundImageId ?? "",
+		coverImageId: info?.coverImageId ?? "",
+	};
+}
+
 export function getFileName(path: string): string {
 	return path.split(/[/\\]/).pop() || "";
 }
@@ -45,6 +62,8 @@ export async function parseGameMapFromProtoFile(filePath: string) {
 	const mapData = JSON.parse(res.jsonData) as GameMap;
 	// 向后兼容：确保所有阶段类型都已初始化（旧地图可能缺少新增的阶段类型）
 	ensureDefaultPhases(mapData);
+	// 向后兼容：旧地图 info 缺少更新日志字段时补默认值
+	mapData.info = ensureMapInfoDefaults(mapData.info);
 	// 从 proto 顶层恢复 serverMapId（旧文件无该字段时为 ""，以 payload 内为准兜底）
 	if (res.serverMapId) mapData.serverMapId = res.serverMapId;
 	return {
@@ -198,6 +217,8 @@ export function createDefaultMapData(): GameMap {
 			version: "0.0.0",
 			editorVersion: __APP_VERSION__,
 			description: "",
+			pendingChangelog: "",
+			changelog: [],
 			backgroundImageId: "",
 			coverImageId: "",
 		},
