@@ -110,6 +110,12 @@ const handleOperation: ClientMessageHandler<SocketMsgType.Operation> = (conn, ms
 	const { operateType, data } = msg.data;
 	const room = host.getRoom();
 
+	// 非房主请求暂停/恢复：由房主代为执行（实现任意玩家可请求暂停）
+	if (clientId !== room.getOwnerId() && (operateType === OperateType.PauseGame || operateType === OperateType.ResumeGame)) {
+		room.emitOperation(room.getOwnerId(), operateType, data, msg.extra);
+		return;
+	}
+
 	// 心跳检查逻辑
 	if (operateType === OperateType.LoadingStarted) {
 		host.pauseClientHeartCheck(clientId);

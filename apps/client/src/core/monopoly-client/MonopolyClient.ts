@@ -1,7 +1,7 @@
 import { FPMessage } from "@mine-monopoly/ui";
 import { useChat, useGameLog, useLoading, useRoomInfo, useUserInfo, useUtil } from "@src/store";
 import { useGameData } from "@src/store/game";
-import { emitHostPeerId, joinRoomApi } from "@src/utils/api/room-router";
+import { emitHostPeerId, getRoomSessionStatus, joinRoomApi } from "@src/utils/api/room-router";
 import { WebRtcSessionManager, SessionSendResult } from "@src/core/network/WebRtcSessionManager";
 import {
 	AIDecisionConfig,
@@ -38,6 +38,7 @@ export class MonopolyClient {
 		if (options) {
 			return (async () => {
 				this.instance = new MonopolyClient(options);
+				this.instance.installConsoleTestApi();
 
 				return this.instance;
 			})();
@@ -53,7 +54,14 @@ export class MonopolyClient {
 		this.session = new WebRtcSessionManager({
 			iceServer: options.iceServer,
 			onMessage: (data) => {
-				if (data.msg && data.type !== SocketMsgType.LeaveRoom && data.type !== SocketMsgType.GameOver) {
+				// PauseGame/ResumeGame 由专用暂停弹窗展示，不走通用 toast，避免与 handleGamePause 重复弹出
+				if (
+					data.msg &&
+					data.type !== SocketMsgType.LeaveRoom &&
+					data.type !== SocketMsgType.GameOver &&
+					data.type !== SocketMsgType.PauseGame &&
+					data.type !== SocketMsgType.ResumeGame
+				) {
 					useLoading().hideLoading();
 					FPMessage({ type: data.msg.type, message: data.msg.content });
 				}
@@ -81,30 +89,39 @@ export class MonopolyClient {
 		});
 	}
 
-	public async joinRoom(roomId: string) {
+	public async joinRoom(roomId: string): Promise<boolean> {
 		connectionDiagnostics.reset();
 		connectionDiagnostics.stageStart("joinRoom_Total");
 		try {
+			// 上一局若在暂停中异常结束，加入新房间时必须清理本地暂停 UI 状态。
+			useUtil().gamePaused = false;
 			const response = await joinRoomApi(roomId);
 			const data = response.data;
 			this.session.setIceServers(data.iceServers || []);
 			let hostPeerId = data.hostPeerId;
 			if (data.needCreate) {
 				useLoading().showLoading("正在创建主机...");
-				hostPeerId = await this.session.createHost(roomId, data.deleteIntervalMs, {
+				const user = useUserInfo();
+				hostPeerId = await this.session.createHost(roomId, data.heartbeatIntervalMs ?? data.deleteIntervalMs, {
 					hostLeaseToken: data.hostLeaseToken,
 					hostEpoch: data.hostEpoch,
+					hostName: user.username,
+					hostId: user.userId,
 				});
-				const user = useUserInfo();
 				await emitHostPeerId(roomId, hostPeerId, user.username, user.userId, data.hostLeaseToken);
 			}
 			if (!hostPeerId) throw new Error("房主尚未就绪，请稍后重试");
 			useLoading().showLoading("正在建立连接...");
 			await this.session.connect(roomId, hostPeerId, () => useRoomInfo().isReady);
 			connectionDiagnostics.stageEnd("joinRoom_Total");
+			return true;
 		} catch (error: any) {
-			connectionDiagnostics.stageFail("joinRoom_Total", error?.message || "服务器连接失败");
-			FPMessage({ type: "error", message: error?.message || "服务器连接失败" });
+			// 优先展示服务端返回的友好提示(如"房间已过期/已关闭/房主租约无效"),避免暴露 axios 原文
+			const serverMsg = error?.response?.data?.msg;
+			const message = serverMsg || error?.message || "服务器连接失败";
+			connectionDiagnostics.stageFail("joinRoom_Total", message);
+			FPMessage({ type: "error", message });
+			return false;
 		}
 	}
 
@@ -119,6 +136,7 @@ export class MonopolyClient {
 	}
 	public registerGameInitSession(initSessionId?: string): void { this.currentInitSessionId = initSessionId || null; }
 	private handleDisconnect(notification: { type: "info" | "success" | "warning" | "error"; content: string }): void {
+		useUtil().gamePaused = false;
 		useGameData().$reset(); useRoomInfo().$reset(); useChat().$reset(); useGameLog().$reset();
 		this.destory();
 		void router.replace({ name: "room-router" }).finally(() => {
@@ -131,6 +149,7 @@ export class MonopolyClient {
 	}
 
 	public async leaveRoom() {
+		useUtil().gamePaused = false;
 		await this.sendMsg({ type: SocketMsgType.LeaveRoom, source: SocketMsgSource.Client, data: undefined });
 		this.session.pauseHeartbeat();
 	}
@@ -192,6 +211,84 @@ export class MonopolyClient {
 
 	public startGame() {
 		this.sendMsg({ type: SocketMsgType.GameStart, source: SocketMsgSource.Client, data: undefined });
+	}
+
+	/**
+	 * 请求暂停游戏：房主直接暂停；其他玩家发送请求，由房主代为执行
+	 */
+	public pauseGame() {
+		this.sendMsg({
+			type: SocketMsgType.Operation,
+			source: SocketMsgSource.Client,
+			data: { operateType: OperateType.PauseGame, data: undefined },
+		});
+	}
+
+	/**
+	 * 请求恢复游戏：房主直接恢复；其他玩家发送请求，由房主代为执行
+	 */
+	public resumeGame() {
+		this.sendMsg({
+			type: SocketMsgType.Operation,
+			source: SocketMsgSource.Client,
+			data: { operateType: OperateType.ResumeGame, data: undefined },
+		});
+	}
+
+	/**
+	 * 开发环境控制台测试入口。仅在 Vite DEV 模式下挂到 window.__MM_TEST__，不参与正式功能。
+	 * 可用于验证暂停、P2P 重连、房主心跳与房间状态，避免人工等待 UI 操作。
+	 */
+	private installConsoleTestApi(): void {
+		if (!import.meta.env.DEV) return;
+		const getClientState = () => ({
+			roomId: useRoomInfo().roomId,
+			gamePaused: useUtil().gamePaused,
+			connectionState: this.session.getState(),
+			connectionStrategy: this.session.getConnectionStrategy(),
+			isRoomOwner: useRoomInfo().amIRoomOwner,
+			isP2pHost: this.session.hasLocalHost(),
+		});
+		(window as any).__MM_TEST__ = {
+			help: [
+				"state()", "pause()", "resume()", "roomStatus()", "sendHostHeartbeat()",
+				"dropP2pConnection()", "reconnect()", "gameProcessState()",
+			],
+			state: getClientState,
+			pause: () => this.pauseGame(),
+			resume: () => this.resumeGame(),
+			roomStatus: async () => {
+				const roomId = useRoomInfo().roomId;
+				if (!roomId) throw new Error("当前未加入房间");
+				return (await getRoomSessionStatus(roomId)).data;
+			},
+			sendHostHeartbeat: async () => {
+				if (!this.session.hasLocalHost()) {
+					return { ok: false, reason: "当前页面未持有 P2P 主机实例；请检查 state().isP2pHost" };
+				}
+				return this.session.debugSendHostHeartbeat();
+			},
+			dropP2pConnection: () => this.session.debugDropP2pConnection(),
+			reconnect: () => this.session.debugReconnectNow(),
+			gameProcessState: () => {
+				const bridge = (window as any).__gpBridge;
+				if (!bridge?.requestState) throw new Error("游戏进程尚未初始化");
+				return new Promise((resolve, reject) => {
+					const previousHandler = bridge.onState;
+					const timeout = window.setTimeout(() => {
+						bridge.onState = previousHandler;
+						reject(new Error("获取游戏进程状态超时"));
+					}, 5000);
+					bridge.onState = (state: unknown) => {
+						window.clearTimeout(timeout);
+						bridge.onState = previousHandler;
+						resolve(state);
+					};
+					bridge.requestState();
+				});
+			},
+		};
+		console.info("[MM_TEST] 控制台测试 API 已就绪", (window as any).__MM_TEST__.help);
 	}
 
 	public requestSave(): void { this.session.requestSave(); }

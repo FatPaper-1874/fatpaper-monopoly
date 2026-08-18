@@ -121,7 +121,8 @@ async function handleJoinRoom(e: Event) {
 	await joinRoom(_roomId);
 }
 
-async function joinRoom(id: string) {
+async function joinRoom(id: string): Promise<boolean> {
+	// MonopolyClient.joinRoom 内部已吞掉错误并弹提示，这里只负责加载态与结果透传
 	try {
 		const monopolyClient = await useMonopolyClient({
 			iceServer: {
@@ -130,9 +131,7 @@ async function joinRoom(id: string) {
 			},
 		});
 		useLoading().showLoading("正在加入房间...");
-		await monopolyClient.joinRoom(id);
-	} catch (e: any) {
-		FPMessage({ type: "error", message: e.message || e });
+		return await monopolyClient.joinRoom(id);
 	} finally {
 		useLoading().hideLoading();
 	}
@@ -151,7 +150,17 @@ async function handleGetRandomPublicRoom(e: Event) {
 		const res = await getRandomPublicRoom();
 		if ((res as any).roomId) {
 			FPMessage({ type: "success", message: "遇到等待的小伙伴了呢!" });
-			await joinRoom((res as any).roomId);
+			const ok = await joinRoom((res as any).roomId);
+			if (!ok) {
+				// 随机抽中的房间可能刚被关闭/过期：自动换一个房间再试一次
+				FPMessage({ type: "warning", message: "该房间刚关闭，正在为你寻找其他房间…" });
+				const retry = await getRandomPublicRoom();
+				if ((retry as any).roomId) {
+					await joinRoom((retry as any).roomId);
+				} else {
+					FPMessage({ type: "error", message: "暂时没有可加入的公开房间" });
+				}
+			}
 		} else {
 			FPMessage({ type: "error", message: "现在没有公开的房间喔" });
 		}

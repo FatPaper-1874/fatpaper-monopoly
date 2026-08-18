@@ -29,6 +29,9 @@ export type SessionSendResult =
 export interface HostSessionRegistration {
 	hostLeaseToken: string;
 	hostEpoch: number;
+	/** 在创建主机时冻结身份信息，供服务端重启后的租约 reclaim 使用。 */
+	hostName: string;
+	hostId: string;
 }
 export interface WebRtcSessionManagerOptions {
 	iceServer: { host: string; port: number };
@@ -101,6 +104,27 @@ export class WebRtcSessionManager {
 	}
 	public getConnectionStrategy(): ConnectionStrategy {
 		return this.strategy;
+	}
+	/** 当前页面是否实际持有 P2P 主机实例（不同于房间 owner 身份）。 */
+	public hasLocalHost(): boolean {
+		return this.host !== null;
+	}
+
+	/** 仅供开发环境 window.__MM_TEST__ 调用：立即发送一次房主租约心跳。 */
+	public async debugSendHostHeartbeat(): Promise<{ ok: boolean; reclaimed: boolean; error?: string }> {
+		if (!this.host) throw new Error("当前页面未持有 P2P 主机实例");
+		return this.host.debugSendHeartbeat();
+	}
+
+	/** 仅供开发环境 window.__MM_TEST__ 调用：关闭当前 P2P 连接，以触发正常重连流程。 */
+	public debugDropP2pConnection(): void {
+		if (!this.connection) throw new Error("当前没有可关闭的 P2P 连接");
+		this.connection.close();
+	}
+
+	/** 仅供开发环境 window.__MM_TEST__ 调用：立即执行一次重连流程。 */
+	public async debugReconnectNow(): Promise<void> {
+		await this.reconnectNow();
 	}
 	public setIceServers(iceServers: RTCIceServer[]): void {
 		this.iceServers = iceServers;
@@ -240,8 +264,14 @@ export class WebRtcSessionManager {
 	private async reconnectNow(): Promise<void> {
 		const context = this.reconnectContext;
 		if (!context) throw new Error("缺少重连上下文");
-		await this.assertRoomStillActive(context.roomId);
-		await this.openConnection(context.hostPeerId);
+		// 优先直接重连主机 P2P(P2P 才是游戏的真实状态);只有直连失败时才查服务端注册表，
+		// 避免"游戏还活着、但服务端房间已过期"导致玩家被误判踢出
+		try {
+			await this.openConnection(context.hostPeerId);
+		} catch (error) {
+			await this.assertRoomStillActive(context.roomId);
+			await this.openConnection(context.hostPeerId);
+		}
 		const result = this.sendJoinRoom(context.isReady());
 		if (!result.ok) throw new Error("重连加入消息发送失败");
 	}
@@ -375,7 +405,8 @@ export class WebRtcSessionManager {
 		const response = await getRoomSessionStatus(roomId);
 		const status = response.data.status;
 		if (status === "closed" || status === "expired") throw new HostRoomClosedError(status);
-		if (status !== "active") throw new Error("房间会话不可用");
+		// grace(宽限期)与 active 均视为可重连
+		if (status !== "active" && status !== "grace") throw new Error("房间会话不可用");
 	}
 	private sendJoinRoom(isReady: boolean): SessionSendResult {
 		const user = useUserInfo();

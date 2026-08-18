@@ -616,6 +616,8 @@ const handlePlayerTp: ServerMessageHandler<SocketMsgType.PlayerTp> = (msg) => {
 };
 
 const handleGameOver: ServerMessageHandler<SocketMsgType.GameOver> = (msg) => {
+	// 游戏结束时清理暂停状态，防止下一局沿用不可关闭的暂停弹窗。
+	useUtil().gamePaused = false;
 	if (msg.msg) useLoading().hideLoading();
 	const gameInfoStore = useGameData();
 	if (msg.data?.returnToRoom) {
@@ -632,12 +634,15 @@ const handleGameOver: ServerMessageHandler<SocketMsgType.GameOver> = (msg) => {
 	if (msg.msg) FPMessage({ type: msg.msg.type, message: msg.msg.content });
 };
 
-const handleGamePause: ServerMessageHandler<SocketMsgType.PauseGame> = () => {
-	useLoading().showLoading("房主摸鱼被发现了，游戏暂停，等待房主回来");
+const handleGamePause: ServerMessageHandler<SocketMsgType.PauseGame> = (msg, client) => {
+	// 只更新状态：暂停弹窗由 game.vue 的 fp-dialog 统一呈现，避免重复 toast
+	const utilStore = useUtil();
+	utilStore.gamePaused = true;
 };
 
 const handleGameResume: ServerMessageHandler<SocketMsgType.ResumeGame> = () => {
-	useLoading().hideLoading();
+	const utilStore = useUtil();
+	utilStore.gamePaused = false;
 };
 
 const handleConfirmDialog: ServerMessageHandler<SocketMsgType.ConfirmDialog> = (msg, client) => {

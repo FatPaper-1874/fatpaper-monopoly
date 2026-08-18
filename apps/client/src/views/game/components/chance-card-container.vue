@@ -52,7 +52,7 @@ async function handleChanceCardClick(card: ChanceCardClientInfo) {
 
 <template>
 	<div class="chance-card-container" :style="{ '--num': _chanceCardsList.length }">
-		<div v-show="utilStore.canUseCard" class="tips">点击卡片使用机会卡，一回合使用一张</div>
+		<div v-show="utilStore.canUseCard" class="tips">点击卡片使用机会卡</div>
 		<TransitionGroup name="card">
 			<ChanceCard
 				@click="handleChanceCardClick(card)"

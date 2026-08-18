@@ -136,6 +136,8 @@ export const useUtil = defineStore("util", {
 			isBankrupted: false,
 			// 记录动画开始前的状态，用于失败时恢复
 			stateBeforeAnimation: TurnState.WAITING_TURN,
+			/** 游戏是否处于暂停状态（房主切后台或任何玩家手动暂停） */
+			gamePaused: false,
 		};
 	},
 	getters: {

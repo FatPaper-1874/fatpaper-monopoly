@@ -24,6 +24,10 @@ type TimerData = {
 	startTime: number;
 	totalPausedTime: number;
 	timeout: number;
+	/** 超时/恢复时用于结束等待 Promise 的 resolve（防止暂停恢复后 Promise 永久悬挂） */
+	resolve?: (value: any) => void;
+	/** 超时后返回的默认值 */
+	defaultValue?: any;
 };
 
 /**
@@ -49,6 +53,8 @@ export class OperateListener {
 	private eventMap: Map<string, EventMap> = new Map();
 	private timerIdCounter: number = 0;
 	private isPaused: boolean = false;
+	/** 本次暂停开始的时间戳（null 表示当前未处于暂停状态） */
+	private pauseStartedAt: number | null = null;
 	private activeTimers: Map<string, TimerData> = new Map();
 
 	// 回调函数
@@ -261,6 +267,8 @@ export class OperateListener {
 				startTime,
 				totalPausedTime: 0,
 				timeout,
+				resolve: (value) => resolve(value as PlayerOperationResult[T]),
+				defaultValue: options.defaultValue,
 			});
 
 			// 设置倒计时间隔（如果需要广播）
@@ -306,6 +314,7 @@ export class OperateListener {
 	public pause(): void {
 		if (this.isPaused) return; // 防止重复暂停
 		this.isPaused = true;
+		this.pauseStartedAt = Date.now();
 
 		this.activeTimers.forEach((timerData) => {
 			clearTimeout(timerData.timeoutId);
@@ -323,21 +332,30 @@ export class OperateListener {
 		this.isPaused = false;
 
 		const now = Date.now();
-		this.activeTimers.forEach((timerData, timerKey) => {
-			const elapsedBeforePause = now - timerData.startTime - timerData.totalPausedTime;
-			const remaining = timerData.timeout - elapsedBeforePause;
+		// 累计本次暂停时长，确保剩余时间不包含暂停期间（修复暂停后剩余时间被错误清零的问题）
+		const pausedDuration = this.pauseStartedAt !== null ? now - this.pauseStartedAt : 0;
+		this.pauseStartedAt = null;
 
-			// 如果已经超时，立即触发
+		this.activeTimers.forEach((timerData, timerKey) => {
+			timerData.totalPausedTime += pausedDuration;
+			const elapsed = now - timerData.startTime - timerData.totalPausedTime;
+			const remaining = timerData.timeout - elapsed;
+
+			// 如果暂停期间已经超时，立即触发超时并结束等待（修复 Promise 永久悬挂）
 			if (remaining <= 0) {
 				this.removeAll(timerData.playerId, timerData.eventType);
 				this.clearTimer(timerKey);
+				this.timeoutCallback?.(timerData.playerId, timerData.eventType);
+				timerData.resolve?.(timerData.defaultValue);
 				return;
 			}
 
-			// 重新设置超时定时器
+			// 重新设置超时定时器（到期后同样要触发超时回调并结束等待）
 			timerData.timeoutId = setTimeout(() => {
 				this.clearTimer(timerKey);
 				this.removeAll(timerData.playerId, timerData.eventType);
+				this.timeoutCallback?.(timerData.playerId, timerData.eventType);
+				timerData.resolve?.(timerData.defaultValue);
 			}, remaining);
 
 			// 重新设置倒计时间隔

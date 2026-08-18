@@ -36,6 +36,7 @@
 	import { storeToRefs } from "pinia";
 	import UiRenderer from "@src/components/utils/ui-renderer/ui-renderer.vue";
 	import FpErrorBoundary from "@src/components/utils/fp-error-boundary/index.vue";
+	import FpDialog from "@src/components/utils/fp-dialog/fp-dialog.vue";
 	import { CollapsiblePanel } from "@src/components/collapsible-panel";
 	//pinia仓库
 	const mapDataStore = useMapData();
@@ -46,6 +47,18 @@
 	const windowWidth = computed(() => window.innerWidth);
 	const windowHeight = computed(() => window.innerHeight);
 	const amISpectator = computed(() => roomInfoStore.amISpectator);
+	const utilStore = useUtil();
+
+	// 暂停弹窗可见性：只读投影 gamePaused，禁止通过关闭按钮/遮罩点击关闭（只能点"继续游戏"）
+	const pauseDialogVisible = computed({
+		get: () => utilStore.gamePaused,
+		set: () => {},
+	});
+
+	// 暂停弹窗上的"继续游戏"：房主直接恢复，其他玩家请求房主代为恢复
+	function handleResumeGame() {
+		socketClient?.resumeGame();
+	}
 
 	const currentPlayerId = computed(() => userInfoStore.userId);
 	const gameDataState = computed(() => gameDataStore.$state);
@@ -279,11 +292,60 @@
 			<!-- 金钱粒子系统：放在 ui-container 外部，避免 pointer-events 冲突 -->
 
 			<scoreboard />
+
+			<!-- 游戏暂停弹窗：使用 fp-dialog 统一样式，暂停期间不可关闭，只能点"继续游戏" -->
+			<FpDialog v-model:visible="pauseDialogVisible" :closable="false" hidden-footer title="游戏已暂停">
+				<div class="pause-dialog-content">
+					<FontAwesomeIcon icon="pause" class="pause-dialog-icon" />
+					<p class="pause-dialog-desc">处理完其他事情后，点击下方按钮即可继续游戏</p>
+					<button class="pause-resume-btn" @click="handleResumeGame">
+						<FontAwesomeIcon icon="play" style="margin-right: 0.4rem" />
+						继续游戏
+					</button>
+				</div>
+			</FpDialog>
 		</div>
 	</FpErrorBoundary>
 </template>
 
 <style lang="scss" scoped>
+/* 暂停弹窗内容（fp-dialog 内） */
+.pause-dialog-content {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.9rem;
+	text-align: center;
+	user-select: none;
+}
+
+.pause-dialog-icon {
+	font-size: 2.2rem;
+	color: var(--fp-color-primary);
+}
+
+.pause-dialog-desc {
+	margin: 0;
+	font-size: 1rem;
+	color: var(--fp-color-tertiary);
+}
+
+.pause-resume-btn {
+	padding: 0.6rem 1.8rem;
+	border: none;
+	border-radius: 0.6rem;
+	background: var(--fp-color-primary);
+	color: #fff;
+	font-size: 1.05rem;
+	font-weight: 600;
+	cursor: pointer;
+	transition: opacity 0.2s;
+}
+
+.pause-resume-btn:hover {
+	opacity: 0.9;
+}
+
 .game-page {
 	position: relative;
 	width: 100%;
