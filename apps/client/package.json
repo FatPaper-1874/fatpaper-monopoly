@@ -3,7 +3,7 @@
 	"author": "Fat_Paper",
 	"description": "Mine-Monopoly的客户端",
 	"private": true,
-	"version": "1.2.8",
+	"version": "1.2.9",
 	"type": "module",
 	"main": "dist-electron/main.js",
 	"scripts": {
