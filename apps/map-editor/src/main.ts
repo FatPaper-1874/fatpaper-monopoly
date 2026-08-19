@@ -67,6 +67,7 @@ import {
 	faObjectGroup,
 	faBoltLightning,
 	faChevronDown,
+	faEye,
 } from "@fortawesome/free-solid-svg-icons";
 import { eventBus } from "./utils/event-bus";
 import { loadMapAuto } from "@src/services/map-serializer";
@@ -115,6 +116,7 @@ library.add(
 	faObjectGroup,
 	faBoltLightning,
 	faChevronDown,
+	faEye,
 );
 
 eventBus.on("renderer-ready", async () => {

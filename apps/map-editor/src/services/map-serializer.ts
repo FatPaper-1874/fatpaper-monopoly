@@ -22,7 +22,7 @@ import type {
 import type { FormSchema } from "@mine-monopoly/types/interfaces/game/util";
 import type { ModifierTemplate } from "@mine-monopoly/types/interfaces/game/action-system/modifier";
 import { getFsApi, type ExtendedFsAPI } from "./fs-api";
-import { ensureMapInfoDefaults, parseGameMapFromProtoFile } from "../utils/file/index";
+import { ensureMapInfoDefaults, notifyLegacyMapPathsGenerated, parseGameMapFromProtoFile } from "../utils/file/index";
 import { getInitPhase } from "../views/map-editor/components/manager/process-manager/utils/init-phase";
 
 // ─── 类型 ───
@@ -154,6 +154,8 @@ export async function serializeToDir(mapData: GameMap, dirPath: string): Promise
 		inUse: mapData.inUse,
 		info: mapData.info,
 		serverMapId: mapData.serverMapId || "",
+		startMapItemId: mapData.startMapItemId,
+		pathMapItemTypeIds: mapData.pathMapItemTypeIds,
 	};
 	await atomicWriteJson(`${dirPath}/map.json`, mapJson);
 
@@ -359,7 +361,7 @@ export async function serializeToDir(mapData: GameMap, dirPath: string): Promise
 
 export async function deserializeFromDir(dirPath: string): Promise<DeserializeResult> {
 	dirPath = normalizePath(dirPath);
-	const mapJson = await readJson<{ id: string; inUse: boolean; info: GameMapInfo; serverMapId?: string }>(`${dirPath}/map.json`);
+	const mapJson = await readJson<{ id: string; inUse: boolean; info: GameMapInfo; serverMapId?: string; startMapItemId?: string; pathMapItemTypeIds?: string[] }>(`${dirPath}/map.json`);
 
 	const mapIndex: string[] =
 		(await API().exists(`${dirPath}/map-index.json`))
@@ -532,6 +534,9 @@ export async function deserializeFromDir(dirPath: string): Promise<DeserializeRe
 			}
 		}
 	}
+
+	// 旧版目录地图（无 map-paths.json）由 mapIndex 生成路径时，弹窗告知
+	if (!Array.isArray(mapPaths) && mapIndex.length > 0) notifyLegacyMapPathsGenerated(mapData);
 
 	return { mapData: normalizeGameMap(mapData), models, images };
 }

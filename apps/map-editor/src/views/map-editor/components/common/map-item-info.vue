@@ -8,11 +8,8 @@ const props = defineProps<{ mapItem: MapItem }>();
 
 const mapDataStore = useMapDataStore();
 
-// 获取当前MapItem在mapIndex中的位置
-const mapIndexPosition = computed(() => {
-	const index = mapDataStore.mapIndex.indexOf(props.mapItem.id);
-	return index >= 0 ? index : null; // 返回从0开始的索引，如果不存在返回null
-});
+const outgoingPathCount = computed(() => mapDataStore.getPathsFrom(props.mapItem.id).length);
+const incomingPathCount = computed(() => mapDataStore.getPathsTo(props.mapItem.id).length);
 
 // 转换旋转值为可读文本
 const rotationText = computed(() => {
@@ -44,11 +41,10 @@ async function copyMapItemId() {
 			</a-descriptions-item>
 
 			<a-descriptions-item :span="3" label="类型">{{ mapItem.type.name }}</a-descriptions-item>
-			<a-descriptions-item :span="3" label="地图索引位置" v-if="mapIndexPosition !== null">
-				第 {{ mapIndexPosition }} 个
-			</a-descriptions-item>
+			<a-descriptions-item :span="1" label="出边">{{ outgoingPathCount }}</a-descriptions-item>
+			<a-descriptions-item :span="1" label="入边">{{ incomingPathCount }}</a-descriptions-item>
 			<a-descriptions-item :span="1" label="坐标"> ({{ mapItem.x }}, {{ mapItem.y }})</a-descriptions-item>
-			<a-descriptions-item :span="2" label="方向"> {{ rotationText }} </a-descriptions-item>
+			<a-descriptions-item :span="3" label="方向"> {{ rotationText }} </a-descriptions-item>
 
 			<a-descriptions-item :span="3" label="绑定的地皮" v-if="mapItem.linkto">
 				{{ mapItem.linkto }}

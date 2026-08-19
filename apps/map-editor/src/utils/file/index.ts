@@ -5,7 +5,7 @@ import { gzipCompress, normalizeGameMap, normalizePhases } from "@mine-monopoly/
 import { useEditorStore, useMapDataStore, useResourceStore } from "@src/stores";
 import { eventBus } from "@src/utils/event-bus";
 import { getInitPhase } from "@src/views/map-editor/components/manager/process-manager/utils/init-phase";
-import { message } from "ant-design-vue";
+import { message, Modal } from "ant-design-vue";
 import { generateShortId } from "@src/utils/short-id";
 import { __MAP_ENCRYPT_KEY__ } from "@src/global.config";
 import { getFsApi } from "@src/services/fs-api";
@@ -56,16 +56,48 @@ export function getFileNameWithoutExt(path: string): string {
 	return fileName.substring(0, lastDotIndex);
 }
 
+/**
+ * 判断旧地图是否需要由 mapIndex 自动生成 mapPaths：
+ * 旧版地图未包含 mapPaths 字段，但携带了旧版线性路径索引 mapIndex。
+ */
+export function hasLegacyMapIndexWithoutPaths(mapData: {
+	mapPaths?: unknown;
+	mapIndex?: unknown;
+}): boolean {
+	return (
+		!Array.isArray(mapData.mapPaths) &&
+		Array.isArray(mapData.mapIndex) &&
+		mapData.mapIndex.length > 0
+	);
+}
+
+/** 弹窗告知用户：旧版地图已根据 mapIndex 自动生成了 mapPaths */
+export function notifyLegacyMapPathsGenerated(mapData: GameMap): void {
+	const count = Array.isArray(mapData.mapIndex) ? mapData.mapIndex.length : 0;
+	Modal.warning({
+		title: "旧版地图路径已自动生成",
+		content:
+			`该地图是旧版地图，未包含新版路径配置，已根据旧版路径索引自动生成 ${count} 条路径。\n\n` +
+			"可在「路径索引 / 路径详情」中查看和调整；保存后路径将写入新版格式。",
+		okText: "知道了",
+	});
+}
+
 export async function parseGameMapFromProtoFile(filePath: string) {
 	const buffer = await window.electronAPI.readFile(filePath);
 	const res = await loadFromProto(new Uint8Array(buffer));
-	const mapData = normalizeGameMap(JSON.parse(res.jsonData) as GameMap);
+	const rawMapData = JSON.parse(res.jsonData) as GameMap;
+	// 旧版地图（无 mapPaths）由 mapIndex 生成路径前先记录，用于弹窗告知
+	const legacyPathsGenerated = hasLegacyMapIndexWithoutPaths(rawMapData);
+	const mapData = normalizeGameMap(rawMapData);
 	// 向后兼容：确保所有阶段类型都已初始化（旧地图可能缺少新增的阶段类型）
 	ensureDefaultPhases(mapData);
 	// 向后兼容：旧地图 info 缺少更新日志字段时补默认值
 	mapData.info = ensureMapInfoDefaults(mapData.info);
 	// 从 proto 顶层恢复 serverMapId（旧文件无该字段时为 ""，以 payload 内为准兜底）
 	if (res.serverMapId) mapData.serverMapId = res.serverMapId;
+	// 旧版地图：弹窗告知路径已由 mapIndex 自动生成
+	if (legacyPathsGenerated) notifyLegacyMapPathsGenerated(mapData);
 	return {
 		id: res.id,
 		mapData,

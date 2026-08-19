@@ -23,11 +23,14 @@ export interface MapPath {
 	/** 终点地图项 ID */
 	toMapItemId: string;
 
-	/** 路口自动移动或超时时优先选择的默认路线 */
-	isDefault?: boolean;
-
 	/** 地图初始化时是否开放；未配置时默认为 true */
 	initEnable?: boolean;
+
+	/** 仅供编辑器识别和展示，不参与运行时选路 */
+	name?: string;
+
+	/** 仅供编辑器识别和展示，不参与运行时选路 */
+	description?: string;
 }
 
 /**
@@ -55,6 +58,15 @@ export interface GameMap {
 
 	/** 地图路径列表（有向图边集合） */
 	mapPaths: MapPath[];
+
+	/**
+	 * 可供玩家行走的 MapItem 类型 ID。
+	 * 未配置时，编辑器只能从现有路径端点推断路径节点，无法检查遗漏节点。
+	 */
+	pathMapItemTypeIds?: string[];
+
+	/** 地图起点；旧地图未配置时从 mapIndex 的第一个节点推断 */
+	startMapItemId?: string;
 
 	/**
 	 * 旧版线性闭环路径索引。

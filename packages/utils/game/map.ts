@@ -1,6 +1,14 @@
 import type { GameMap, GamePhaseInfo, MapPath } from "@mine-monopoly/types";
 
 /**
+ * 生成路径 ID：由起止地图项 ID 和序号组成。
+ * 手动创建与从 mapIndex 自动生成的路径共用此格式，保证一致且可推导。
+ */
+export function createMapPathId(fromMapItemId: string, toMapItemId: string, index: number): string {
+	return `${fromMapItemId}-${toMapItemId}-${index}`;
+}
+
+/**
  * 将旧版 mapIndex 转换为闭环的有向路径集合。
  *
  * 仅用于加载未保存 mapPaths 的旧地图；路径 ID 由起止地图项 ID 和索引组成，
@@ -12,7 +20,7 @@ export function createMapPathsFromMapIndex(mapIndex: readonly string[]): MapPath
 	return mapIndex.map((fromMapItemId, index) => {
 		const toMapItemId = mapIndex[(index + 1) % mapIndex.length];
 		return {
-			id: `${fromMapItemId}-${toMapItemId}-${index}`,
+			id: createMapPathId(fromMapItemId, toMapItemId, index),
 			fromMapItemId,
 			toMapItemId,
 		};
@@ -60,6 +68,9 @@ export function normalizePhases(phases: GameMap["phases"]): void {
 export function normalizeGameMap(map: GameMap): GameMap {
 	if (!Array.isArray(map.mapPaths)) {
 		map.mapPaths = createMapPathsFromMapIndex(map.mapIndex ?? []);
+	}
+	if (!map.startMapItemId && map.mapIndex?.length) {
+		map.startMapItemId = map.mapIndex[0];
 	}
 
 	const phases = map.phases;

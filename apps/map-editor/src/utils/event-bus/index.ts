@@ -20,6 +20,12 @@ export type Events = {
 	"map-item-updated": string;
 	"map-event-link": string;
 	"map-event-unlink": string;
+	"map-path-added": string;
+	"map-path-updated": string;
+	"map-path-removed": string;
+	"map-paths-for-map-item-updated": string;
+	"map-paths-replaced": void;
+	"map-path-selected": string | undefined;
 	"map-index-update": string[];
 	"map-background-update": void;
 
