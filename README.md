@@ -337,7 +337,7 @@ docker compose -f docker/docker-compose.yml up -d
 
 <div align="center">
 
-[![Star History](https://api.star-history.com/svg?repos=FatPaper-1874/mine-monopoly&type=Date)](https://star-history.com/#FatPaper-1874/mine-monopoly&Date)
+[![Star History](https://star-history.dera.page/svg?repos=FatPaper-1874/mine-monopoly&type=Date)](https://star-history.dera.page/#FatPaper-1874/mine-monopoly&Date)
 
 </div>
 
