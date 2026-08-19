@@ -1,26 +1,36 @@
 import type { GameMap, GamePhaseInfo, MapPath } from "@mine-monopoly/types";
 
 /**
- * 生成路径 ID：由起止地图项 ID 和序号组成。
+ * 生成路径 ID：由起止地图项 ID 组成。
  * 手动创建与从 mapIndex 自动生成的路径共用此格式，保证一致且可推导。
  */
-export function createMapPathId(fromMapItemId: string, toMapItemId: string, index: number): string {
-	return `${fromMapItemId}-${toMapItemId}-${index}`;
+export function createMapPathId(fromMapItemId: string, toMapItemId: string): string {
+	return `${fromMapItemId}-${toMapItemId}`;
 }
 
 /**
  * 将旧版 mapIndex 转换为闭环的有向路径集合。
  *
- * 仅用于加载未保存 mapPaths 的旧地图；路径 ID 由起止地图项 ID 和索引组成，
- * 与旧地图索引顺序保持稳定并保证唯一。
+ * 仅用于加载未保存 mapPaths 的旧地图；路径 ID 由起止地图项 ID 组成。
+ * 正常旧地图为无重复相邻对的简单闭环，ID 天然唯一；
+ * 若数据异常出现重复的相邻对，则追加最小序号避免 ID 冲突。
  */
 export function createMapPathsFromMapIndex(mapIndex: readonly string[]): MapPath[] {
 	if (mapIndex.length < 2) return [];
 
+	const usedIds = new Set<string>();
 	return mapIndex.map((fromMapItemId, index) => {
 		const toMapItemId = mapIndex[(index + 1) % mapIndex.length];
+		const baseId = createMapPathId(fromMapItemId, toMapItemId);
+		let id = baseId;
+		let suffix = 1;
+		while (usedIds.has(id)) {
+			id = `${baseId}-${suffix}`;
+			suffix++;
+		}
+		usedIds.add(id);
 		return {
-			id: createMapPathId(fromMapItemId, toMapItemId, index),
+			id,
 			fromMapItemId,
 			toMapItemId,
 		};

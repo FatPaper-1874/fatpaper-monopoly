@@ -236,7 +236,7 @@ export const useMapDataStore = defineStore("MapData", {
 		addMapPath(input: Omit<MapPath, "id"> & { id?: string }): MapPath {
 			const path: MapPath = {
 				...input,
-				id: input.id || createMapPathId(input.fromMapItemId, input.toMapItemId, this.mapPaths.length),
+				id: input.id || createMapPathId(input.fromMapItemId, input.toMapItemId),
 			};
 			if (this.findMapPathById(path.id)) throw Error("路径 ID 已存在");
 			this.assertMapPathCanBeSaved(path);

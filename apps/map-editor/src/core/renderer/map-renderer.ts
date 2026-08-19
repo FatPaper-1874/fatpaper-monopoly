@@ -17,7 +17,7 @@ import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass";
 import { GammaCorrectionShader } from "three/examples/jsm/shaders/GammaCorrectionShader";
 import { message } from "ant-design-vue";
 import { BoxSelector, projectToScreen, isPointInRect } from "@src/utils/three/box-selector";
-import { generateShortId } from "@src/utils/short-id";
+import { generateMapItemId } from "@src/utils/map-item-id";
 
 interface MapItemTypeWithModel extends MapItemType {
 	model: THREE.Object3D;
@@ -1220,7 +1220,7 @@ export class MapRenderer {
 
 	private async createMapItem(x: number, y: number, rotation: 0 | 1 | 2 | 3, currentItemType: MapItemType) {
 		const newMapItem: MapItem = {
-			id: generateShortId('map-item'),
+			id: generateMapItemId(),
 			x,
 			y,
 			rotation,
