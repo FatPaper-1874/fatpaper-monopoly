@@ -1,7 +1,7 @@
 import { FormSchema, GameMap, GameMapInfo } from "@mine-monopoly/types";
 import { dataToProtoBuffer, loadFromProto, ProtoFileType, encodeProductMap } from "@mine-monopoly/utils/protos";
 import { encrypt } from "@mine-monopoly/utils/crypto";
-import { gzipCompress, normalizePhases } from "@mine-monopoly/utils";
+import { gzipCompress, normalizeGameMap, normalizePhases } from "@mine-monopoly/utils";
 import { useEditorStore, useMapDataStore, useResourceStore } from "@src/stores";
 import { eventBus } from "@src/utils/event-bus";
 import { getInitPhase } from "@src/views/map-editor/components/manager/process-manager/utils/init-phase";
@@ -59,7 +59,7 @@ export function getFileNameWithoutExt(path: string): string {
 export async function parseGameMapFromProtoFile(filePath: string) {
 	const buffer = await window.electronAPI.readFile(filePath);
 	const res = await loadFromProto(new Uint8Array(buffer));
-	const mapData = JSON.parse(res.jsonData) as GameMap;
+	const mapData = normalizeGameMap(JSON.parse(res.jsonData) as GameMap);
 	// 向后兼容：确保所有阶段类型都已初始化（旧地图可能缺少新增的阶段类型）
 	ensureDefaultPhases(mapData);
 	// 向后兼容：旧地图 info 缺少更新日志字段时补默认值
@@ -225,6 +225,7 @@ export function createDefaultMapData(): GameMap {
 		mapItems: [],
 		chanceCards: [],
 		mapItemTypes: [],
+		mapPaths: [],
 		mapIndex: [],
 		roles: [],
 		inUse: false,

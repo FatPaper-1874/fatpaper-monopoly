@@ -1,4 +1,23 @@
-import type { GameMap, GamePhaseInfo } from "@mine-monopoly/types";
+import type { GameMap, GamePhaseInfo, MapPath } from "@mine-monopoly/types";
+
+/**
+ * 将旧版 mapIndex 转换为闭环的有向路径集合。
+ *
+ * 仅用于加载未保存 mapPaths 的旧地图；路径 ID 由起止地图项 ID 和索引组成，
+ * 与旧地图索引顺序保持稳定并保证唯一。
+ */
+export function createMapPathsFromMapIndex(mapIndex: readonly string[]): MapPath[] {
+	if (mapIndex.length < 2) return [];
+
+	return mapIndex.map((fromMapItemId, index) => {
+		const toMapItemId = mapIndex[(index + 1) % mapIndex.length];
+		return {
+			id: `${fromMapItemId}-${toMapItemId}-${index}`,
+			fromMapItemId,
+			toMapItemId,
+		};
+	});
+}
 
 /**
  * 向后兼容：确保地图 phases 中所有已知阶段类型都存在。
@@ -30,17 +49,20 @@ export function normalizePhases(phases: GameMap["phases"]): void {
 }
 
 /**
- * 向后兼容：确保地图 phases 中所有已知阶段类型都存在。
- * 旧地图可能缺少新增的阶段类型（如 postRestore），缺失的初始化为空数组。
+ * 向后兼容：补齐地图运行所需的新增数据结构。
  *
  * 此函数会原地修改 map 对象并返回它（方便链式调用）。
+ * 未配置 mapPaths 的旧地图会由 mapIndex 生成等价的线性闭环路径。
  *
  * @param map - 地图对象
  * @returns 同一个 map 对象（已规范化）
  */
 export function normalizeGameMap(map: GameMap): GameMap {
+	if (!Array.isArray(map.mapPaths)) {
+		map.mapPaths = createMapPathsFromMapIndex(map.mapIndex ?? []);
+	}
+
 	const phases = map.phases;
-	if (!phases) return map;
-	normalizePhases(phases);
+	if (phases) normalizePhases(phases);
 	return map;
 }

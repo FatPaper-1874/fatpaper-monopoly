@@ -10,6 +10,27 @@ import { FormSchema } from "./util";
 export interface GameSettingForm {}
 
 /**
+ * 地图路径接口
+ * 表示从一个地图项到另一个地图项的单向连接。
+ */
+export interface MapPath {
+	/** 路径唯一标识 */
+	id: string;
+
+	/** 起点地图项 ID */
+	fromMapItemId: string;
+
+	/** 终点地图项 ID */
+	toMapItemId: string;
+
+	/** 路口自动移动或超时时优先选择的默认路线 */
+	isDefault?: boolean;
+
+	/** 地图初始化时是否开放；未配置时默认为 true */
+	initEnable?: boolean;
+}
+
+/**
  * 游戏地图接口
  * 表示完整的游戏地图配置
  */
@@ -32,7 +53,13 @@ export interface GameMap {
 	/** 地图项类型列表 */
 	mapItemTypes: MapItemType[];
 
-	/** 地图索引（地图项 ID 顺序列表） */
+	/** 地图路径列表（有向图边集合） */
+	mapPaths: MapPath[];
+
+	/**
+	 * 旧版线性闭环路径索引。
+	 * @deprecated 当前移动逻辑仍依赖该字段；完成路径移动迁移后再将其设为可选。
+	 */
 	mapIndex: string[];
 
 	/** 角色列表 */
