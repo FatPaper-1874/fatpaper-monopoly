@@ -39,7 +39,10 @@ export class Player implements IPlayer {
 	public money: number;
 	public properties: IProperty[] = [];
 	public chanceCards: IChanceCard[] = [];
-	public positionIndex: number; //所在棋盘格子的下标
+	/** @deprecated 仅用于旧 effectCode、旧存档和线性地图兼容；图移动以 positionMapItemId 为准。 */
+	public positionIndex: number;
+	/** 玩家当前位置的唯一运行时真相。 */
+	public positionMapItemId?: string;
 	public isStop: number; //是否停止回合
 	public isBankrupted: boolean = false; //是否破产
 	public isOffline: boolean; //是否断线
@@ -65,6 +68,7 @@ export class Player implements IPlayer {
 		roundPhasesInfo: GamePhaseInfo[],
 		role: Role,
 		extraLibs?: string,
+		initPositionMapItemId?: string,
 	) {
 		this.roundPhases = roundPhasesInfo.map((roundPhaseInfo) => {
 			return new GamePhase(roundPhaseInfo, undefined, extraLibs);
@@ -75,6 +79,7 @@ export class Player implements IPlayer {
 		this.roleId = user.roleId;
 		this.money = initMoney;
 		this.positionIndex = initPositionIndex;
+		this.positionMapItemId = initPositionMapItemId;
 		this.isStop = 0;
 		this.isOffline = false;
 		this.dices = [new Dice(), new Dice()];
@@ -258,6 +263,10 @@ export class Player implements IPlayer {
 		this.positionIndex = newPositionIndex;
 	}
 
+	public setPositionMapItemId(mapItemId: string) {
+		this.positionMapItemId = mapItemId;
+	}
+
 	public setBankrupted(isBankrupted: boolean) {
 		const becameBankrupted = isBankrupted && !this.isBankrupted;
 		this.isBankrupted = isBankrupted;
@@ -311,7 +320,7 @@ export class Player implements IPlayer {
 		const excludeKeys = new Set([
 			"modifierManager", "buffManager", "commandBus", "roundPhases",
 			"id", "user", "dices", "money", "properties", "chanceCards",
-			"positionIndex", "isStop", "stop", "isBankrupted", "isOffline",
+			"positionIndex", "positionMapItemId", "isStop", "stop", "isBankrupted", "isOffline",
 			"isAI", "isThinking", "infoDisplay",
 			"name", "roleId",
 			"aiThinkingRequestCount",
@@ -327,6 +336,7 @@ export class Player implements IPlayer {
 			chanceCards: this.chanceCards.map((card) => card.getChanceCardInfo()),
 			buff: this.getBuff(),
 			positionIndex: this.positionIndex,
+			positionMapItemId: this.positionMapItemId,
 			stop: this.isStop,
 			isBankrupted: this.isBankrupted,
 			isOffline: this.isOffline,
@@ -372,8 +382,13 @@ export class Player implements IPlayer {
 		await this.commandBus.execute({ type: "player.walk", payload: { steps } });
 	}
 
+	/** @deprecated 仅保留旧线性地图和 effectCode 兼容。 */
 	public async tp(positionIndex: number): Promise<void> {
 		await this.commandBus.execute({ type: "player.tp", payload: { positionIndex } });
+	}
+
+	public async tpToMapItem(mapItemId: string): Promise<void> {
+		await this.commandBus.execute({ type: "player.tp.map-item", payload: { mapItemId } });
 	}
 
 	public async rollDices(): Promise<DiceResult[]> {
@@ -426,7 +441,7 @@ export class Player implements IPlayer {
 		"exportData",
 	]);
 
-	public restoreFromSnapshot(snapshot: PlayerSnapshot, gameProcess: any): void {
+	public restoreFromSnapshot(snapshot: PlayerSnapshot, gameProcess: IGameProcess): void {
 		this.aiThinkingRequestCount = 0;
 
 		// 通用恢复：遍历快照中所有字段，跳过由专门逻辑处理的
@@ -451,6 +466,11 @@ export class Player implements IPlayer {
 
 		// stop 字段映射到 isStop
 		this.isStop = snapshot.stop;
+
+		// 兼容旧存档：缺少位置 ID 时按旧线性索引回填；无效索引再回退地图起点。
+		if (!this.positionMapItemId) {
+			this.positionMapItemId = gameProcess.mapData.mapIndex[this.positionIndex] ?? gameProcess.mapData.startMapItemId;
+		}
 
 		// 同步 roleId 到 user 对象（客户端通过 PlayerInfo.user.roleId 渲染角色模型）
 		// 直接使用快照中的 roleId，避免被 backward compat 或其他逻辑覆盖

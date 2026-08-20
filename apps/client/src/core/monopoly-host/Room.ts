@@ -2446,6 +2446,7 @@ export class Room {
 			case SocketMsgType.ButtonRegister:
 			case SocketMsgType.ButtonStateChanged:
 			case SocketMsgType.ButtonRemove:
+			case SocketMsgType.MapPathChoiceRequest:
 				return true;
 			default:
 				return false;

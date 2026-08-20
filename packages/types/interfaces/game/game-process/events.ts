@@ -5,6 +5,7 @@ import { IPlayer } from "./entities"; // 引用 entities
 import { IGameProcess } from "./core"; // 引用 core
 import { DiceResult } from "../util";
 import { MapEvent } from "../item";
+import type { MapMoveDirection, MapMovementSegment } from "../map";
 
 /**
  * 游戏上下文接口
@@ -167,8 +168,23 @@ export interface PlayerMoveContext extends RollDiceContext {
 	/** 移动类型 */
 	type: PlayerMoveType;
 
-	/** 目标位置索引 */
+	/** 目标位置索引（旧线性地图兼容）。 */
 	targetIndex: number;
+
+	/** 实际跨越的路径 ID（MapPath V2）。 */
+	pathId?: string;
+
+	/** 实际行走方向（MapPath V2）。 */
+	direction?: MapMoveDirection;
+
+	/** 实际移动起点地图项 ID（MapPath V2）。 */
+	fromMapItemId?: string;
+
+	/** 实际移动终点地图项 ID（MapPath V2）。 */
+	toMapItemId?: string;
+
+	/** 本次行动已产生的实际移动段（MapPath V2）。 */
+	movementSegments?: MapMovementSegment[];
 }
 
 /**
@@ -206,8 +222,8 @@ export type GameRuntimeEvent = {
 	/** 玩家回合结束 */
 	"player.round.end": { player: IPlayer };
 
-	/** 玩家到达某位置 */
-	"player.arrived": { positionIndex: number; player: IPlayer };
+	/** 玩家到达某位置；mapItemId 为 MapPath V2 位置事实。 */
+	"player.arrived": { positionIndex: number; mapItemId?: string; player: IPlayer };
 } & Record<string, any>;
 
 /**

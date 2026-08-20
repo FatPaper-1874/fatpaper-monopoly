@@ -189,6 +189,9 @@ export function handleServerSocketMessage(msg: ServerSocketMessage, client: Mono
 		case SocketMsgType.PlayerTp:
 			handlePlayerTp(msg, client);
 			break;
+		case SocketMsgType.MapPathChoiceRequest:
+			handleMapPathChoiceRequest(msg, client);
+			break;
 		case SocketMsgType.GameOver:
 			handleGameOver(msg, client);
 			break;
@@ -479,6 +482,17 @@ const handleGameData: ServerMessageHandler<SocketMsgType.GameData> = (msg) => {
 
 	if (gameData) {
 		gameDataStore.updateGameData(gameData);
+
+		// MapPath V2 会通过 GameData 回传 pendingChoice 的清除状态，供所有客户端关闭等待面板。
+		if (gameData.mapPathRuntimeState) {
+			const pendingChoice = gameData.mapPathRuntimeState.pendingChoice;
+			if (pendingChoice) {
+				gameDataStore.setMapPathChoiceRequest(pendingChoice);
+			} else {
+				gameDataStore.clearMapPathChoiceRequest();
+			}
+		}
+
 		const me = gameData.players.find((p) => p.id === useUserInfo().userId);
 		const utilStore = useUtil();
 		utilStore.setBankrupted(me?.isBankrupted ?? false);
@@ -605,14 +619,22 @@ const handleUsedChanceCard: ServerMessageHandler<SocketMsgType.UseChanceCard> = 
 
 const handlePlayerWalk: ServerMessageHandler<SocketMsgType.PlayerWalk> = (msg) => {
 	if (!msg.data) return;
-	const { playerId, step, walkId, totalSteps, startStep } = msg.data;
-	useEventBus().emit("player-walk", playerId, step, walkId, totalSteps, startStep);
+	const { playerId, step, walkId, totalSteps, startStep, segment } = msg.data;
+	useEventBus().emit("player-walk", playerId, step, walkId, totalSteps, startStep, segment);
 };
 
 const handlePlayerTp: ServerMessageHandler<SocketMsgType.PlayerTp> = (msg) => {
 	if (!msg.data) return;
-	const { playerId, positionIndex, walkId } = msg.data;
-	useEventBus().emit("player-tp", playerId, positionIndex, walkId);
+	const { playerId, positionIndex, walkId, mapItemId } = msg.data;
+	useEventBus().emit("player-tp", playerId, positionIndex, walkId, mapItemId);
+};
+
+const handleMapPathChoiceRequest: ServerMessageHandler<SocketMsgType.MapPathChoiceRequest> = (msg) => {
+	const request = msg.data;
+	if (!request) return;
+
+	// 所有客户端保留当前请求，以便观战者和其他玩家显示等待状态。
+	useGameData().setMapPathChoiceRequest(request);
 };
 
 const handleGameOver: ServerMessageHandler<SocketMsgType.GameOver> = (msg) => {

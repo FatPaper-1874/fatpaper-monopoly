@@ -1,4 +1,4 @@
-import { GameMap, GameMapInDb, Role } from "@mine-monopoly/types";
+import { GameMap, GameMapInDb, MapPath, Role } from "@mine-monopoly/types";
 import { loadFromProto, ProtoFileType, decodeProductMap, gzipDecompress, normalizeGameMap } from "@mine-monopoly/utils";
 import { isProductFile, decrypt } from "@mine-monopoly/utils/crypto";
 import { env } from "@mine-monopoly/env";
@@ -8,6 +8,111 @@ import { useMapData, useResourceStore } from "@src/store/game";
 import { formatBytes } from "@src/utils";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { getDracoLoader } from "../draco/draco";
+
+/**
+ * 地图在写入客户端 store / Worker 前必须满足的 MapPath 运行时前置条件。
+ */
+export function validateGameMapForRuntime(map: GameMap): string[] {
+	const errors: string[] = [];
+	const mapItems = Array.isArray(map.mapItems) ? map.mapItems : [];
+	const mapItemById = new Map(mapItems.map((item) => [item.id, item]));
+
+	if (!Array.isArray(map.mapItems)) {
+		errors.push("地图缺少 mapItems 数组");
+	}
+
+	const startMapItemId = map.startMapItemId;
+	if (!startMapItemId || !mapItemById.has(startMapItemId)) {
+		errors.push(`起点 startMapItemId \"${startMapItemId ?? "<missing>"}\" 不存在于 mapItems`);
+	}
+
+	const pathNodes = new Set<string>();
+	const paths = Array.isArray(map.mapPaths) ? map.mapPaths : [];
+	for (const [index, path] of paths.entries()) {
+		const candidate = path as Partial<MapPath>;
+		const pathId = typeof candidate.id === "string" && candidate.id ? candidate.id : `<missing-id@${index}>`;
+		const fromMapItemId = candidate.fromMapItemId;
+		const toMapItemId = candidate.toMapItemId;
+
+		if (!fromMapItemId || !mapItemById.has(fromMapItemId)) {
+			errors.push(
+				`路径 \"${pathId}\" 的 fromMapItemId \"${fromMapItemId ?? "<missing>"}\" 不存在于 mapItems`,
+			);
+		} else {
+			pathNodes.add(fromMapItemId);
+		}
+		if (!toMapItemId || !mapItemById.has(toMapItemId)) {
+			errors.push(
+				`路径 \"${pathId}\" 的 toMapItemId \"${toMapItemId ?? "<missing>"}\" 不存在于 mapItems`,
+			);
+		} else {
+			pathNodes.add(toMapItemId);
+		}
+	}
+
+	// pathMapItemTypeIds 是新地图的显式路径节点声明；旧地图未配置该字段时不做此项收紧。
+	const hasPathMapItemTypeIds = Object.prototype.hasOwnProperty.call(map, "pathMapItemTypeIds");
+	if (!hasPathMapItemTypeIds) return errors;
+	if (!Array.isArray(map.pathMapItemTypeIds)) {
+		errors.push("pathMapItemTypeIds 必须是数组");
+		return errors;
+	}
+
+	const declaredTypeIds = new Set(map.pathMapItemTypeIds);
+	const knownTypeIds = new Set((Array.isArray(map.mapItemTypes) ? map.mapItemTypes : []).map((type) => type.id));
+	for (const typeId of declaredTypeIds) {
+		if (!knownTypeIds.has(typeId)) {
+			errors.push(`pathMapItemTypeIds 声明了不存在的地图项类型 \"${typeId}\"`);
+		}
+	}
+
+	for (const [index, path] of paths.entries()) {
+		const candidate = path as Partial<MapPath>;
+		const pathId = typeof candidate.id === "string" && candidate.id ? candidate.id : `<missing-id@${index}>`;
+		for (const [endpointName, mapItemId] of [
+			["fromMapItemId", candidate.fromMapItemId],
+			["toMapItemId", candidate.toMapItemId],
+		] as const) {
+			if (!mapItemId) continue;
+			const mapItem = mapItemById.get(mapItemId);
+			if (mapItem && !declaredTypeIds.has(mapItem.type?.id)) {
+				errors.push(
+					`路径 \"${pathId}\" 的 ${endpointName} \"${mapItemId}\" 类型 \"${mapItem.type?.id ?? "<missing>"}\" 未包含在 pathMapItemTypeIds`,
+				);
+			}
+		}
+	}
+
+	for (const mapItem of mapItems) {
+		if (declaredTypeIds.has(mapItem.type?.id) && !pathNodes.has(mapItem.id)) {
+			errors.push(
+				`路径节点类型 \"${mapItem.type.id}\" 的地图项 \"${mapItem.id}\" 未被任何路径端点引用`,
+			);
+		}
+	}
+
+	return errors;
+}
+
+/**
+ * 统一客户端地图入口：先补齐旧地图 MapPath 数据，再拒绝无法安全运行的路径图。
+ */
+export function normalizeAndValidateGameMap(map: GameMap): GameMap {
+	const normalizedMap = normalizeGameMap(map);
+	const errors = validateGameMapForRuntime(normalizedMap);
+	if (errors.length > 0) {
+		throw new Error(`地图路径校验失败：\n- ${errors.join("\n- ")}`);
+	}
+	return normalizedMap;
+}
+
+/**
+ * 规范化已解码的地图载荷，使直接使用 getGameMap() 的宿主创建链路也不会绕过校验。
+ */
+function normalizeLoadedGameMapData<T extends { jsonData: string }>(mapData: T): T {
+	const gameMap = normalizeAndValidateGameMap(JSON.parse(mapData.jsonData) as GameMap);
+	return { ...mapData, jsonData: JSON.stringify(gameMap) };
+}
 
 /**
  * 流式下载地图文件并显示进度（已下载/总大小）
@@ -115,11 +220,10 @@ export async function getGameMap(gameMapInfo: GameMapInDb) {
 
 	const bytes = new Uint8Array(arrayBuffer);
 	// Detect format: .mmmap (encrypted product file) or .fpmap (legacy)
-	if (isProductFile(bytes)) {
-		return await loadFromProductFile(bytes, encryptKey);
-	} else {
-		return await loadFromProto(bytes);
-	}
+	const mapData = isProductFile(bytes)
+		? await loadFromProductFile(bytes, encryptKey)
+		: await loadFromProto(bytes);
+	return normalizeLoadedGameMapData(mapData);
 }
 
 export async function loadGameMapFromServer(mapId: string) {
@@ -128,7 +232,7 @@ export async function loadGameMapFromServer(mapId: string) {
 	if (mapInfo) {
 		useLoading().showLoading("正在读取地图...");
 		const mapData = await getGameMap(mapInfo);
-		const gameMap = normalizeGameMap(JSON.parse(mapData.jsonData) as GameMap);
+		const gameMap = normalizeAndValidateGameMap(JSON.parse(mapData.jsonData) as GameMap);
 		useMapData().$patch(gameMap);
 		await loadMapDataToResourceStore(mapData);
 		useLoading().hideLoading();
@@ -153,7 +257,7 @@ export async function loadGameMapFromFile(file: ArrayBuffer) {
 	}
 
 	console.log("🚀 ~ loadGameMapFromFile ~ mapData:", mapData);
-	const gameMap = normalizeGameMap(JSON.parse(mapData.jsonData) as GameMap);
+	const gameMap = normalizeAndValidateGameMap(JSON.parse(mapData.jsonData) as GameMap);
 	useMapData().$patch(gameMap);
 	await loadMapDataToResourceStore(mapData);
 	const coverResource = useResourceStore().getRecourceById(gameMap.info.coverImageId);

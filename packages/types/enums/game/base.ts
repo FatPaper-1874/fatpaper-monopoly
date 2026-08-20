@@ -30,6 +30,7 @@ export const enum SocketMsgType {
 	RoundTimeOut = "RoundTimeOut", //回合超时
 	PlayerWalk = "PlayerWalk", //位置移动方式1：玩家角色走路
 	PlayerTp = "PlayerTp", //位置移动方式2：传送
+	MapPathChoiceRequest = "MapPathChoiceRequest", //宿主请求当前玩家选择地图路径
 	Operation = "Operation", //玩家操作
 	Bankrupt = "Bankrupt", //破产
 	GameOver = "GameOver", //游戏结束

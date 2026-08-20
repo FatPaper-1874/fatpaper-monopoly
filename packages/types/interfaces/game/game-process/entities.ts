@@ -31,7 +31,13 @@ export interface IPlayer {
 	/** 玩家拥有的机会卡列表 */
 	chanceCards: IChanceCard[];
 
-	/** 当前位置索引 */
+	/** MapPath V2 的当前位置地图项 ID；旧玩家实例可暂时不提供。 */
+	positionMapItemId?: string;
+
+	/**
+	 * 旧版线性位置索引。
+	 * @deprecated 仅供旧 effectCode 与线性地图兼容；新逻辑应使用 positionMapItemId。
+	 */
 	positionIndex: number;
 
 	/** 是否停止回合（废弃，使用 stop） */
@@ -146,9 +152,13 @@ export interface IPlayer {
 
 	/**
 	 * 设置位置索引
+	 * @deprecated 仅用于旧线性地图兼容。
 	 * @param newIndex - 新的位置索引
 	 */
 	setPositionIndex: (newIndex: number) => void;
+
+	/** 设置当前位置地图项 ID（MapPath V2）。 */
+	setPositionMapItemId?: (mapItemId: string) => void;
 
 	/**
 	 * 设置破产状态
@@ -164,9 +174,13 @@ export interface IPlayer {
 
 	/**
 	 * 传送到指定位置
+	 * @deprecated 仅用于旧线性地图兼容。
 	 * @param positionIndex - 目标位置索引
 	 */
 	tp: (positionIndex: number) => Promise<void>;
+
+	/** 按地图项 ID 传送（MapPath V2）。 */
+	tpToMapItem?: (mapItemId: string) => Promise<void>;
 
 	/**
 	 * 掷骰子

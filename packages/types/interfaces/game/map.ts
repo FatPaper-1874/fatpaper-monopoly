@@ -33,6 +33,87 @@ export interface MapPath {
 	description?: string;
 }
 
+/** 一次地图移动沿路径原始方向还是反向进行。 */
+export type MapMoveDirection = "forward" | "reverse";
+
+/**
+ * 一次实际跨越地图路径的移动段。
+ * 反向移动时，toMapItemId 等于该路径的 fromMapItemId。
+ */
+export interface MapMovementSegment {
+	/** 实际行走的路径 ID */
+	pathId: string;
+
+	/** 实际行走方向 */
+	direction: MapMoveDirection;
+
+	/** 实际移动起点地图项 ID */
+	fromMapItemId: string;
+
+	/** 实际移动终点地图项 ID */
+	toMapItemId: string;
+
+	/** 本次行动中的第几步（0-based） */
+	stepIndex: number;
+
+	/** 本次行动的总步数 */
+	totalSteps: number;
+}
+
+/** 玩家在岔路口可选择的一条实际可走路径。 */
+export interface MapPathChoiceCandidate {
+	/** 原始地图路径 ID */
+	pathId: string;
+
+	/** 按当前方向实际可到达的终点地图项 ID */
+	targetMapItemId: string;
+
+	/** 选择后实际行走方向 */
+	direction: MapMoveDirection;
+
+	/** 路径展示名称 */
+	name?: string;
+
+	/** 路径展示说明 */
+	description?: string;
+}
+
+/** 宿主向当前玩家发出的路径选择请求。 */
+export interface MapPathChoiceRequest {
+	/** 用于拒绝迟到或重复选择的请求 ID */
+	requestId: string;
+
+	/** 需要作出选择的玩家 ID */
+	playerId: string;
+
+	/** 当前所在地图项 ID */
+	currentMapItemId: string;
+
+	/** 当前需要选择的实际移动方向 */
+	direction: MapMoveDirection;
+
+	/** 选择前尚未消耗的步数 */
+	remainingSteps: number;
+
+	/** 宿主已校验的候选路径，顺序与 mapPaths 保持一致 */
+	candidates: MapPathChoiceCandidate[];
+}
+
+/**
+ * 地图路径的会话运行时状态。
+ * 该状态不应写回 GameMap；initEnable 仅属于静态地图定义。
+ */
+export interface MapPathRuntimeState {
+	/** 当前启用的路径 ID 集合 */
+	enabledPathIds: string[];
+
+	/** 当前移动行动的方向（如果有） */
+	currentMoveDirection?: MapMoveDirection;
+
+	/** 暂停等待玩家选择的请求（如果有） */
+	pendingChoice?: MapPathChoiceRequest;
+}
+
 /**
  * 游戏地图接口
  * 表示完整的游戏地图配置
@@ -70,7 +151,7 @@ export interface GameMap {
 
 	/**
 	 * 旧版线性闭环路径索引。
-	 * @deprecated 当前移动逻辑仍依赖该字段；完成路径移动迁移后再将其设为可选。
+	 * @deprecated MapPath V2 迁移期间仅供旧 effectCode、旧存档和线性地图兼容；新逻辑不得以此作为路径事实来源。
 	 */
 	mapIndex: string[];
 

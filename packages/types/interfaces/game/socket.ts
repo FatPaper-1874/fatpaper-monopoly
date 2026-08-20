@@ -20,6 +20,7 @@ import {
 } from "./game-process";
 import { Role, User, UserInRoomInfo } from "./item";
 import { DiceResult } from "./util";
+import type { MapMovementSegment, MapPathChoiceRequest } from "./map";
 
 /**
  * WebSocket 消息类型
@@ -508,6 +509,8 @@ export interface SocketMessageDataType {
 			playerId: string;
 			/** 行走的步数 */
 			step: number;
+			/** 实际跨越的路径段（MapPath V2）。 */
+			segment?: MapMovementSegment;
 			/** 行走 ID */
 			walkId: string;
 			/** 总移动步数（用于分段走路时的步数显示） */
@@ -528,11 +531,22 @@ export interface SocketMessageDataType {
 		server: {
 			/** 传送的玩家 ID */
 			playerId: string;
-			/** 目标位置索引 */
+			/** 目标位置索引（旧线性地图兼容）。 */
 			positionIndex: number;
+			/** 目标地图项 ID（MapPath V2）。 */
+			mapItemId?: string;
 			/** 行走 ID */
 			walkId: string;
 		};
+	};
+
+	/**
+	 * 地图路径选择请求
+	 * 宿主通知当前玩家在岔路口选择一条已校验的可走路径。
+	 */
+	[SocketMsgType.MapPathChoiceRequest]: {
+		client: never;
+		server: MapPathChoiceRequest;
 	};
 
 	/**
@@ -1029,6 +1043,12 @@ export interface PlayerOperationResult {
 
 	/** 动态按钮点击 */
 	[OperateType.DynamicButtonClick]: DynamicButtonClickOperationResult;
+
+	/** 地图路径选择结果（MapPath V2）。 */
+	[OperateType.ChooseMapPath]: {
+		requestId: string;
+		pathId: string;
+	};
 
 	/** 安全模式重试 */
 

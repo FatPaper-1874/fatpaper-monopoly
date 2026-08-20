@@ -29,6 +29,10 @@ import {
 	IProperty,
 	MapEvent,
 	MapItem,
+	MapMoveDirection,
+	MapMovementSegment,
+	MapPath,
+	MapPathChoiceRequest,
 	OperateType,
 	PlayerOperationResult,
 	PlayerRoundContext,
@@ -77,7 +81,17 @@ import type { Emitter } from "mitt";
 import { SaveSnapshot, PlayerSnapshot, PropertySnapshot } from "@src/core/save/types";
 import { applyWorkerSandbox } from "./security";
 
-import { normalizePhases } from "@mine-monopoly/utils";
+import {
+	buildMapPathAdjacency,
+	getAvailableMapPaths as getAvailableMapPathsFromAdjacency,
+	getInitialEnabledMapPathIds,
+	getMapItemIdFromPositionIndex,
+	getPositionIndexFromMapItemId,
+	normalizeGameMap,
+	normalizePhases,
+	selectDefaultMapPath,
+	type MapPathAdjacency,
+} from "@mine-monopoly/utils";
 // ⚠️ 必须在任何游戏代码执行前调用，切断危险 API
 applyWorkerSandbox();
 
@@ -553,6 +567,10 @@ export class GameProcess implements IGameProcess {
 	public chanceCardInfos: Map<string, ChanceCardInfo> = new Map();
 	public mapItems: Map<string, MapItem> = new Map();
 	public mapEvents: Map<string, RuntimeMapEvent> = new Map();
+	private mapPathAdjacency: MapPathAdjacency;
+	private enabledPathIds: Set<string>;
+	private currentMapMoveDirection?: MapMoveDirection;
+	private pendingMapPathChoice?: MapPathChoiceRequest;
 
 	public gameRuntimeStack: GameRuntimeStack = new GameRuntimeStack();
 
@@ -623,9 +641,11 @@ export class GameProcess implements IGameProcess {
 		};
 
 	constructor(mapData: GameMap, gameSetting: GameSetting, userList: UserInRoomInfo[], roomOwnerId: string) {
-		this.mapData = mapData;
+		this.mapData = normalizeGameMap(mapData);
 		// 向后兼容：确保所有阶段类型都已初始化（旧地图可能缺少新增的阶段类型）
 		normalizePhases(this.mapData.phases);
+		this.mapPathAdjacency = buildMapPathAdjacency(this.mapData.mapPaths ?? []);
+		this.enabledPathIds = new Set(getInitialEnabledMapPathIds(this.mapData.mapPaths ?? []));
 		this.gameSetting = gameSetting;
 		this.userList = userList;
 		// 暴露 gameProcess 给自定义代码，但不可被覆盖
@@ -1633,95 +1653,183 @@ export class GameProcess implements IGameProcess {
 			player.isAI = Boolean(u.isAI);
 			player.setBankruptcyHandler((bankruptedPlayer) => this.releaseBankruptedPlayerAssets(bankruptedPlayer));
 			player.setPositionIndex(0);
+			const startMapItemId = this.mapData.startMapItemId ?? this.mapData.mapIndex[0];
+			if (!startMapItemId) throw new Error("地图缺少有效起点，无法初始化玩家位置");
+			player.setPositionMapItemId(startMapItemId);
 			this.players.set(player.id, player);
 
 			player.commandBus.setHandler("player.walk", async (payload) => {
 				this.setCurrentEventName(`${player.name} 正在走路`);
 				const { steps } = payload;
-				const total = this.mapData.mapIndex.length;
-				const direction = steps > 0 ? 1 : -1;
 				const totalSteps = Math.abs(steps);
-
-				let currentStep = 0;
-				let cursorIndex = player.positionIndex;
-				const passedItems: { mapItemId: string; index: number; mapItem?: MapItem }[] = [];
+				const segments: MapMovementSegment[] = [];
+				const passedItems: { mapItemId: string; index: number; mapItem?: MapItem; pathId?: string; direction?: MapMoveDirection }[] = [];
 				let passedIndex = 0;
+				let completedSteps = 0;
+				let direction: MapMoveDirection = "forward";
+				let currentMapItemId =
+					player.positionMapItemId ??
+					getMapItemIdFromPositionIndex(player.positionIndex, this.mapData.mapIndex) ??
+					this.mapData.startMapItemId;
 
-				// 分段走路：每段都基于玩家的当前逻辑位置继续推进，
-				// 这样经过事件里发生传送后，剩余步数会从新位置继续结算。
-				while (currentStep < totalSteps) {
-					const segmentStartIndex = cursorIndex;
+				if (!currentMapItemId || !this.mapItems.has(currentMapItemId)) {
+					throw new Error(`玩家 ${player.name} 缺少有效地图位置，无法移动`);
+				}
+				player.setPositionMapItemId(currentMapItemId);
 
-					// 向前看，累积连续的无事件步数
-					let continuousSteps = 0;
-					while (currentStep + continuousSteps < totalSteps) {
-						const checkStep = continuousSteps + 1;
-						const checkIndex = this.normalizeIndex(segmentStartIndex + checkStep * direction, total);
-						const mapItemId = this.mapData.mapIndex[checkIndex];
+				try {
+					while (completedSteps < totalSteps) {
+						this.currentMapMoveDirection = direction;
+						let candidates = this.getAvailableMapPaths(currentMapItemId, direction);
 
-						continuousSteps++;
-						if (this.checkMapItemHasPassedEvent(mapItemId)) {
-							break;
+						// 到达死路时沿反方向回退；两边均无可用路径则提前结束。
+						if (candidates.length === 0) {
+							direction = direction === "forward" ? "reverse" : "forward";
+							this.currentMapMoveDirection = direction;
+							candidates = this.getAvailableMapPaths(currentMapItemId, direction);
+							if (candidates.length === 0) {
+								console.warn("[MapPath] 玩家移动中断：当前位置没有已启用路径", {
+									playerId: player.id,
+									mapItemId: currentMapItemId,
+									remainingSteps: totalSteps - completedSteps,
+								});
+								break;
+							}
+						}
+
+						let selectedPath = selectDefaultMapPath(candidates);
+						if (!selectedPath) break;
+
+						if (candidates.length > 1 && !player.isAI) {
+							const request: MapPathChoiceRequest = {
+								requestId: randomString(16),
+								playerId: player.id,
+								currentMapItemId,
+								direction,
+								remainingSteps: totalSteps - completedSteps,
+								candidates: candidates.map((path) => ({
+									pathId: path.id,
+									targetMapItemId: direction === "forward" ? path.toMapItemId : path.fromMapItemId,
+									direction,
+									name: path.name,
+									description: path.description,
+								})),
+							};
+							const defaultValue = { requestId: request.requestId, pathId: selectedPath.id };
+							const choicePromise = this.oncePlayerOperationAsync(player.id, OperateType.ChooseMapPath, {
+								timeout: this.defaultTimeoutMs,
+								defaultValue,
+							});
+							this.pendingMapPathChoice = request;
+							this.gameDataBroadcast();
+							this.sendToPlayer(player.id, {
+								type: SocketMsgType.MapPathChoiceRequest,
+								source: SocketMsgSource.Server,
+								data: request,
+							});
+
+							try {
+								const choice = await choicePromise;
+								if (choice?.requestId === request.requestId) {
+									selectedPath = candidates.find((path) => path.id === choice.pathId) ?? selectedPath;
+								}
+							} finally {
+								if (this.pendingMapPathChoice?.requestId === request.requestId) {
+									this.pendingMapPathChoice = undefined;
+									this.gameDataBroadcast();
+								}
+							}
+						}
+
+						const fromMapItemId = currentMapItemId;
+						const toMapItemId = direction === "forward" ? selectedPath.toMapItemId : selectedPath.fromMapItemId;
+						const segment: MapMovementSegment = {
+							pathId: selectedPath.id,
+							direction,
+							fromMapItemId,
+							toMapItemId,
+							stepIndex: completedSteps,
+							totalSteps,
+						};
+
+						await this.walkSegment(player, direction === "forward" ? 1 : -1, segment, totalSteps, completedSteps + 1);
+						player.setPositionMapItemId(toMapItemId);
+						const positionIndex = getPositionIndexFromMapItemId(toMapItemId, this.mapData.mapIndex);
+						if (positionIndex !== undefined) player.setPositionIndex(positionIndex);
+						segments.push(segment);
+						completedSteps++;
+						currentMapItemId = toMapItemId;
+
+						if (this.checkMapItemHasPassedEvent(currentMapItemId)) {
+							passedItems.push({
+								mapItemId: currentMapItemId,
+								index: passedIndex++,
+								mapItem: this.mapItems.get(currentMapItemId),
+								pathId: selectedPath.id,
+								direction,
+							});
+							try {
+								await this.handlePlayerPassedEvents(player, [currentMapItemId]);
+								currentMapItemId =
+									player.positionMapItemId ??
+									getMapItemIdFromPositionIndex(player.positionIndex, this.mapData.mapIndex) ??
+									currentMapItemId;
+							} catch (error) {
+								console.error("经过事件执行失败:", error);
+							}
 						}
 					}
-
-					// 至少走一步
-					if (continuousSteps === 0) continuousSteps = 1;
-
-					const segmentEndIndex = this.normalizeIndex(segmentStartIndex + continuousSteps * direction, total);
-
-					// 走这一段
-					await this.walkSegment(player, segmentStartIndex, continuousSteps * direction, totalSteps, currentStep + 1);
-					currentStep += continuousSteps;
-					cursorIndex = segmentEndIndex;
-					player.setPositionIndex(cursorIndex);
-
-					// 检查当前位置是否有事件
-					const currentMapItemId = this.mapData.mapIndex[cursorIndex];
-
-					if (this.checkMapItemHasPassedEvent(currentMapItemId)) {
-						// 收集经过信息
-						passedItems.push({
-							mapItemId: currentMapItemId,
-							index: passedIndex++,
-							mapItem: this.mapItems.get(currentMapItemId),
-						});
-						// 触发经过事件
-						try {
-							await this.handlePlayerPassedEvents(player, [currentMapItemId]);
-							cursorIndex = player.positionIndex;
-						} catch (error) {
-							console.error("经过事件执行失败:", error);
-							// 继续走路，不中断游戏
-						}
-					}
+				} finally {
+					this.currentMapMoveDirection = undefined;
 				}
 
-				player.setPositionIndex(cursorIndex);
 				this.gameDataBroadcast();
-
-				// 填充经过信息供 after 修饰器使用
 				payload.passed = passedItems;
-
-				return payload;
+				return { steps, segments };
 			});
 
 			player.commandBus.setHandler("player.tp", async (payload) => {
 				this.setCurrentEventName(`${player.name} 正在传送`);
 				const { positionIndex } = payload;
+				const mapItemId = getMapItemIdFromPositionIndex(positionIndex, this.mapData.mapIndex);
+				if (!mapItemId || !this.mapItems.has(mapItemId)) {
+					throw new Error(`无效的旧地图位置索引: ${positionIndex}`);
+				}
 				const walkId = randomString(16);
-				const msg: ServerSocketMessage = {
+				player.setPositionIndex(positionIndex);
+				player.setPositionMapItemId(mapItemId);
+				this.gameDataBroadcast();
+				this.gameBroadcast({
 					type: SocketMsgType.PlayerTp,
 					source: SocketMsgSource.Server,
-					data: { playerId: player.id, positionIndex, walkId },
-				};
-				player.setPositionIndex(positionIndex);
-				this.gameDataBroadcast();
-				this.gameBroadcast(msg);
-
-				// 等待动画完成
+					data: { playerId: player.id, positionIndex, mapItemId, walkId },
+				});
 				await this.waitForAnimationComplete(walkId, 2000);
+				return payload;
+			});
 
+			player.commandBus.setHandler("player.tp.map-item", async (payload) => {
+				this.setCurrentEventName(`${player.name} 正在传送`);
+				const { mapItemId } = payload;
+				if (!this.mapItems.has(mapItemId)) {
+					throw new Error(`找不到传送目标地图项: ${mapItemId}`);
+				}
+				const walkId = randomString(16);
+				const mappedPositionIndex = getPositionIndexFromMapItemId(mapItemId, this.mapData.mapIndex);
+				if (mappedPositionIndex !== undefined) player.setPositionIndex(mappedPositionIndex);
+				player.setPositionMapItemId(mapItemId);
+				this.gameDataBroadcast();
+				this.gameBroadcast({
+					type: SocketMsgType.PlayerTp,
+					source: SocketMsgSource.Server,
+					data: {
+						playerId: player.id,
+						positionIndex: mappedPositionIndex ?? player.positionIndex,
+						mapItemId,
+						walkId,
+					},
+				});
+				await this.waitForAnimationComplete(walkId, 2000);
 				return payload;
 			});
 
@@ -2200,8 +2308,7 @@ export class GameProcess implements IGameProcess {
 
 	public async handleArriveEvent(arrivedPlayer: IPlayer) {
 		if (arrivedPlayer.isBankrupted) return;
-		const playerPositionIndex = arrivedPlayer.positionIndex;
-		const arriveItemId = this.mapData.mapIndex[playerPositionIndex];
+		const arriveItemId = arrivedPlayer.positionMapItemId ?? this.mapData.mapIndex[arrivedPlayer.positionIndex];
 		const arriveItem = this.mapItems.get(arriveItemId);
 		if (!arriveItem) return;
 		if (arriveItem.mapEventId) {
@@ -2294,36 +2401,50 @@ export class GameProcess implements IGameProcess {
 	 */
 	private async walkSegment(
 		player: Player,
-		sourceIndex: number,
-		steps: number,
+		step: number,
+		segment: MapMovementSegment,
 		totalSteps: number,
 		currentStep: number,
 	): Promise<void> {
 		const walkId = randomString(16);
-		const targetIndex = this.normalizeIndex(sourceIndex + steps, this.mapData.mapIndex.length);
-
-		// 发送走路指令
-		const msg: ServerSocketMessage = {
+		this.gameBroadcast({
 			type: SocketMsgType.PlayerWalk,
 			source: SocketMsgSource.Server,
 			data: {
 				playerId: player.id,
-				step: steps,
+				step,
+				segment,
 				walkId,
-				totalSteps, // 传递总步数用于显示
-				startStep: currentStep, // 传递当前步数用于显示
+				totalSteps,
+				startStep: currentStep,
 			},
-		};
+		});
 
-		this.gameBroadcast(msg);
-
-		// 等待动画完成
 		const animationDuration =
-			GameProcess.WALK_ANIMATION_BASE_DURATION * (Math.abs(steps) + GameProcess.WALK_ANIMATION_EXTRA_STEPS);
-
+			GameProcess.WALK_ANIMATION_BASE_DURATION * (Math.abs(step) + GameProcess.WALK_ANIMATION_EXTRA_STEPS);
 		await this.waitForAnimationComplete(walkId, animationDuration);
 	}
 
+	public getMapItemById(mapItemId: string): MapItem | undefined {
+		return this.mapItems.get(mapItemId);
+	}
+
+	public getMapPathById(pathId: string): MapPath | undefined {
+		return this.mapData.mapPaths?.find((path) => path.id === pathId);
+	}
+
+	public getAvailableMapPaths(mapItemId: string, direction: MapMoveDirection): MapPath[] {
+		return getAvailableMapPathsFromAdjacency(this.mapPathAdjacency, mapItemId, direction, this.enabledPathIds);
+	}
+
+	public isMapPathEnabled(pathId: string): boolean { return this.enabledPathIds.has(pathId); }
+
+	public setMapPathEnabled(pathId: string, enabled: boolean): void {
+		if (!this.getMapPathById(pathId)) throw new Error(`找不到地图路径: ${pathId}`);
+		if (enabled) this.enabledPathIds.add(pathId);
+		else this.enabledPathIds.delete(pathId);
+		this.gameDataBroadcast();
+	}
 	private getPlayerById(id: string) {
 		return this.players.get(id);
 	}
@@ -4078,6 +4199,11 @@ export class GameProcess implements IGameProcess {
 			currentRound: this.currentRound,
 			currentMultiplier: this.currentMultiplier,
 			players: Array.from(this.players.values()).map((player) => player.getPlayerInfo()),
+			mapPathRuntimeState: {
+				enabledPathIds: [...this.enabledPathIds],
+				currentMoveDirection: this.currentMapMoveDirection,
+				pendingChoice: this.pendingMapPathChoice,
+			},
 			properties: Array.from(this.properties.values()).map((property) => property.getPropertyInfo()),
 			isGameOver: this.isGameOver,
 			rankedPlayerIds: this.rankedPlayerIds,
@@ -4295,6 +4421,16 @@ export class GameProcess implements IGameProcess {
 			exportData: { ...this.exportData },
 			customData: { ...this.customData },
 			gameLogList: [...this.gameLogList],
+			mapPathRuntimeState: {
+				enabledPathIds: [...this.enabledPathIds],
+				currentMoveDirection: this.currentMapMoveDirection,
+				pendingChoice: this.pendingMapPathChoice
+					? {
+						...this.pendingMapPathChoice,
+						candidates: this.pendingMapPathChoice.candidates.map((candidate) => ({ ...candidate })),
+					}
+					: undefined,
+			},
 		};
 	}
 
@@ -4327,6 +4463,25 @@ export class GameProcess implements IGameProcess {
 		this.exportData = { ...snapshot.exportData };
 		this.customData = { ...snapshot.customData };
 		this.gameLogList = [...snapshot.gameLogList];
+
+		const mapPathRuntimeState = snapshot.mapPathRuntimeState;
+		if (mapPathRuntimeState) {
+			const validPathIds = new Set(this.mapData.mapPaths.map((path) => path.id));
+			this.enabledPathIds = new Set(
+				mapPathRuntimeState.enabledPathIds.filter((pathId) => validPathIds.has(pathId)),
+			);
+			this.currentMapMoveDirection = mapPathRuntimeState.currentMoveDirection;
+			this.pendingMapPathChoice = mapPathRuntimeState.pendingChoice
+				? {
+					...mapPathRuntimeState.pendingChoice,
+					candidates: mapPathRuntimeState.pendingChoice.candidates.map((candidate) => ({ ...candidate })),
+				}
+				: undefined;
+		} else {
+			this.enabledPathIds = new Set(getInitialEnabledMapPathIds(this.mapData.mapPaths));
+			this.currentMapMoveDirection = undefined;
+			this.pendingMapPathChoice = undefined;
+		}
 
 		// 广播最新状态
 		this.gameDataBroadcast();

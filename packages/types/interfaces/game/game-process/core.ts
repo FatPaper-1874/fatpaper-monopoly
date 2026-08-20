@@ -1,13 +1,13 @@
 import { GameLinkItem, TargetSelectType } from "../../../../types/enums/game/game";
 import { OperateType } from "../../../../types/enums/game/game-process";
-import { GameMap } from "../map";
+import { GameMap, MapMoveDirection, MapPath } from "../map";
 import { PlayerOperationResult, ServerSocketMessage } from "../socket";
 import { IPlayer, IProperty, IChanceCard } from "./entities"; // 引用 entities
 import { ChanceCardInfo } from "./infos"; // 引用 infos
 import { IGameRuntimeStack, GameContext, GameEvent, GameRuntimeEvent, RuntimeMapEvent } from "./events"; // 引用 events
 import { ButtonController } from "../button"; // 引用 button
 import { AIDecisionPrompt, AIDecisionSelection } from "../ai";
-import { MapEvent } from "../item"; // 引用 item
+import { MapEvent, MapItem } from "../item"; // 引用 item
 
 import {
 	ConfirmDialogOption,
@@ -57,6 +57,24 @@ export interface IGameProcess extends IGameProcessCustomFields {
 
 	/** 游戏地图数据 */
 	mapData: GameMap;
+
+	/** 根据 ID 获取地图项。 */
+	getMapItemById?(mapItemId: string): MapItem | undefined;
+
+	/** 根据 ID 获取地图路径。 */
+	getMapPathById?(pathId: string): MapPath | undefined;
+
+	/**
+	 * 获取指定地图项在给定实际移动方向下的可走路径。
+	 * 返回顺序必须与 mapData.mapPaths 保持一致。
+	 */
+	getAvailableMapPaths?(mapItemId: string, direction: MapMoveDirection): MapPath[];
+
+	/** 查询路径是否在当前会话中启用。 */
+	isMapPathEnabled?(pathId: string): boolean;
+
+	/** 设置路径在当前会话中的启用状态，不修改静态地图数据。 */
+	setMapPathEnabled?(pathId: string, enabled: boolean): void;
 
 	/** 游戏设置 */
 	gameSetting: GameSetting;
