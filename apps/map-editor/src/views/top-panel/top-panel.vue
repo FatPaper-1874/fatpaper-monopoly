@@ -94,10 +94,18 @@ function handleToolMenuClick({ key }: { key: ToolMenuKey }) {
 function handleRenameMapItemIds() {
 	renameConfirmVisible.value = false;
 	const mapDataStore = useMapDataStore();
-	const count = renameAllMapItemIds();
+	const result = renameAllMapItemIds();
 	// map item ID 是渲染场景的 key，重命名后需重新加载地图
 	eventBus.emit("map-loaded", mapDataStore.$state);
-	message.success(`已将 ${count} 个 MapItem 的 ID 重命名为标准格式`, 2);
+	let tip = `已将 ${result.renamedCount} 个 MapItem 的 ID 重命名为标准格式`;
+	if (result.removedDanglingPaths > 0 || result.removedDanglingIndexIds > 0 || result.startMapItemIdFallback) {
+		const cleaned: string[] = [];
+		if (result.removedDanglingPaths > 0) cleaned.push(`移除 ${result.removedDanglingPaths} 条悬空路径`);
+		if (result.removedDanglingIndexIds > 0) cleaned.push(`清理 ${result.removedDanglingIndexIds} 个悬空索引引用`);
+		if (result.startMapItemIdFallback) cleaned.push("起点已回退到有效节点");
+		tip += `；${cleaned.join("，")}`;
+	}
+	message.success(tip, 4);
 }
 
 // ─── 打开项目文件夹 ───
@@ -480,7 +488,8 @@ function handleReloadMap() {
 			<p class="rename-confirm-section"><b>修改内容：</b></p>
 			<ul>
 				<li>所有 MapItem 的 ID 将重新生成为标准格式（<code>mi-xxxxxx</code>），共 {{ renameMapItemCount }} 个；</li>
-				<li>地图内部引用会自动同步更新：MapItem 互链（linkto / beLinked）、地图路径（mapPaths）、地图起点（startMapItemId）、旧版路径索引（mapIndex）。</li>
+				<li>地图内部引用会自动同步更新：MapItem 互链（linkto / beLinked）、地图路径（mapPaths）、地图起点（startMapItemId）、旧版路径索引（mapIndex）；</li>
+				<li>存在悬空引用（指向不存在 MapItem 的旧 ID）时自动清理：悬空路径移除、索引悬空引用清理、起点回退到有效节点。</li>
 			</ul>
 			<p class="rename-confirm-section"><b>可能的影响：</b></p>
 			<ul>

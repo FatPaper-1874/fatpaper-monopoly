@@ -187,8 +187,17 @@ export function normalizeGameMap(map: GameMap): GameMap {
 	if (!Array.isArray(map.mapPaths)) {
 		map.mapPaths = createMapPathsFromMapIndex(map.mapIndex ?? []);
 	}
-	if (!map.startMapItemId && map.mapIndex?.length) {
-		map.startMapItemId = map.mapIndex[0];
+
+	// 起点缺失或悬空（指向不存在的 map item，如旧地图重命名遗留的旧 ID）时，
+	// 回退到「索引首节点 → 首条路径起点 → 首个 map item」，保证编辑器与客户端
+	// 运行时校验（startMapItemId 必须存在于 mapItems）都能通过。
+	const mapItems = Array.isArray(map.mapItems) ? map.mapItems : [];
+	const startMapItemId = map.startMapItemId;
+	if (!startMapItemId || !mapItems.some((item) => item.id === startMapItemId)) {
+		map.startMapItemId =
+			(map.mapIndex ?? []).find((id) => mapItems.some((item) => item.id === id)) ??
+			(map.mapPaths ?? []).find((path) => mapItems.some((item) => item.id === path.fromMapItemId))?.fromMapItemId ??
+			mapItems[0]?.id;
 	}
 
 	const phases = map.phases;
