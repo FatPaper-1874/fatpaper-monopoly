@@ -77,6 +77,21 @@ export class TextSprite {
 		this.texture.needsUpdate = true;
 	}
 
+	/**
+	 * 获取文字在纹理画布中的紧致包围盒，宽高均为画布尺寸的归一化比例。
+	 * Sprite 默认使用整张画布作为射线命中区域，因此需要该尺寸创建更精确的交互区域。
+	 */
+	public getTextBoundsInCanvas(text: string): { width: number; height: number } {
+		this.context.font = `bold ${this.fontSize}px ContentFont`;
+		const lines = text.split("\\n");
+		const textWidth = Math.max(0, ...lines.map((line) => this.context.measureText(line).width));
+		const textHeight = this.lineHight * lines.length;
+		return {
+			width: (textWidth + this.strokeWidth * 2) / this.canvas.width,
+			height: (textHeight + this.strokeWidth * 2) / this.canvas.height,
+		};
+	}
+
 	// 获取精灵对象
 	public getSprite() {
 		return this.sprite;

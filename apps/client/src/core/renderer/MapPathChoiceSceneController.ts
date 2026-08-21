@@ -24,6 +24,7 @@ type PathChoiceEntry = {
 	lineMaterial: THREE.MeshBasicMaterial;
 	arrow: THREE.Group;
 	label: THREE.Sprite;
+	labelHitArea: THREE.Sprite;
 	labelText: TextSprite;
 	labelColor: string;
 	targetHighlight: THREE.Group;
@@ -111,6 +112,7 @@ function createDefaultMapPathChoiceArrow(): THREE.Group {
 export class MapPathChoiceSceneController {
 	private readonly group = new THREE.Group();
 	private readonly entries = new Map<string, PathChoiceEntry>();
+	private readonly interactiveObjects: THREE.Object3D[] = [];
 	private readonly raycaster = new THREE.Raycaster();
 	private readonly pointer = new THREE.Vector2();
 	private readonly arrowMaterialStates = new WeakMap<THREE.Material, ArrowMaterialState>();
@@ -161,10 +163,7 @@ export class MapPathChoiceSceneController {
 		if (!this.isMyChoice()) return;
 
 		this.raycaster.setFromCamera(this.pointer, this.options.camera);
-		const intersections = this.raycaster.intersectObjects(
-			Array.from(this.entries.values(), (entry) => entry.arrow),
-			true,
-		);
+		const intersections = this.raycaster.intersectObjects(this.interactiveObjects, true);
 		const pathId = intersections.length > 0 ? this.getPathIdFromIntersection(intersections[0].object) : null;
 		if (pathId !== this.hoveredPathId) {
 			this.hoveredPathId = pathId;
@@ -227,6 +226,7 @@ export class MapPathChoiceSceneController {
 			const targetHighlightRadius = THREE.MathUtils.clamp(from.distanceTo(to) * 0.22, 0.52, 1.1);
 			const targetHighlight = new THREE.Group();
 			targetHighlight.name = `MapPathChoiceTargetHighlight:${candidate.pathId}`;
+			targetHighlight.userData.pathId = candidate.pathId;
 			targetHighlight.position.copy(to);
 			targetHighlight.position.y += 0.16;
 			// 不在父 Group 上设置 renderOrder；Group 的 groupOrder 会优先于文字自身的 renderOrder，
@@ -272,18 +272,40 @@ export class MapPathChoiceSceneController {
 			labelSprite.position.copy(to);
 			labelSprite.position.y += 1.45;
 			labelSprite.scale.set(2.4, 2.4, 2.4);
+
+			// Sprite 默认会用整张纹理画布（当前为正方形）进行射线检测，
+			// 这里单独创建一个与实际文字包围盒一致的透明 Sprite 作为交互区域。
+			const labelBounds = labelText.getTextBoundsInCanvas(pathLabel);
+			const labelHitArea = new THREE.Sprite(
+				new THREE.SpriteMaterial({
+					transparent: true,
+					opacity: 0,
+					depthTest: false,
+					depthWrite: false,
+				}),
+			);
+			labelHitArea.userData.pathId = candidate.pathId;
+			labelHitArea.position.copy(labelSprite.position);
+			labelHitArea.scale.set(
+				Math.max(labelBounds.width * labelSprite.scale.x, 0.05),
+				Math.max(labelBounds.height * labelSprite.scale.y, 0.05),
+				1,
+			);
+
 			// 文字始终盖在目标格高亮之上，避免高亮圆圈因忽略深度测试而遮挡说明。
 			labelSprite.material.depthTest = false;
 			labelSprite.material.depthWrite = false;
 			labelSprite.renderOrder = 1004;
 
-			this.group.add(line, arrow, targetHighlight, labelSprite);
+			this.group.add(line, arrow, targetHighlight, labelSprite, labelHitArea);
+			this.interactiveObjects.push(arrow, targetHighlight, labelHitArea);
 			this.entries.set(candidate.pathId, {
 				candidate,
 				line,
 				lineMaterial,
 				arrow,
 				label: labelSprite,
+				labelHitArea,
 				labelText,
 				labelColor: PATH_LABEL_COLOR,
 				targetHighlight,
@@ -405,8 +427,10 @@ export class MapPathChoiceSceneController {
 			const labelMaterial = entry.label.material;
 			labelMaterial.map?.dispose();
 			labelMaterial.dispose();
+			entry.labelHitArea.material.dispose();
 		}
 		this.entries.clear();
+		this.interactiveObjects.length = 0;
 		this.group.clear();
 		this.options.canvas.style.cursor = "";
 
