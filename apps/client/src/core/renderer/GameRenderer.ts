@@ -387,10 +387,11 @@ export class GameRenderer {
 					this.isLockingRoleFromSetting &&
 					this.currentFocusModule
 				) {
-					this.updateCamera(this.controls, this.currentFocusModule, 7, 30);
+					// 持续跟随必须在单帧内完成；在渲染循环里创建 GSAP tween 会导致多个 tween 同时争抢相机状态。
+					this.followCamera(this.controls, this.currentFocusModule, 7, 30, delta);
 				}
 				if (!this.pathChoiceController.isCameraTransitioning) {
-					this.controls.update(100);
+					this.controls.update(delta);
 				}
 
 				Array.from(this.playerEntities.values()).forEach((player) => {
@@ -1323,6 +1324,9 @@ export class GameRenderer {
 
 					this.currentFocusModule = null;
 					this.isLockingRole = false;
+					if (!this.pathChoiceController.isActive && !this.pathChoiceController.isCameraTransitioning) {
+						this.controls.enabled = true;
+					}
 
 					// 拆散重叠的玩家模型
 					this.breakUpPlayersInSameMapItem();
@@ -1374,6 +1378,9 @@ export class GameRenderer {
 
 					this.currentFocusModule = null;
 					this.isLockingRole = false;
+					if (!this.pathChoiceController.isActive && !this.pathChoiceController.isCameraTransitioning) {
+						this.controls.enabled = true;
+					}
 					this.breakUpPlayersInSameMapItem();
 					const monopolyClient = useMonopolyClient();
 					monopolyClient && monopolyClient.AnimationComplete(walkId);
@@ -1603,6 +1610,37 @@ export class GameRenderer {
 		}
 	}
 
+	/**
+	 * 持续跟随角色。该方法由 render loop 调用，因此只能直接更新当前帧状态，
+	 * 不能创建 GSAP tween，否则每帧都会累积多个相机动画并产生抖动。
+	 */
+	private followCamera(
+		controls: OrbitControls,
+		targetObject: THREE.Object3D,
+		followDistance: number,
+		followAngleY: number,
+		delta: number,
+	) {
+		controls.enabled = false;
+		const targetPos = targetObject.position;
+		const cameraFaceVector = controls.object.getWorldDirection(new THREE.Vector3());
+		if (Math.abs(cameraFaceVector.x) + Math.abs(cameraFaceVector.z) < 0.000001) return;
+
+		// 保持原有的水平取景距离计算，只替换 tween 驱动方式，避免改变既有镜头构图。
+		const coefficient = followDistance / cameraFaceVector.length();
+		const followPos = targetPos.clone();
+		followPos.x -= cameraFaceVector.x * coefficient;
+		followPos.y = targetPos.y + followDistance * Math.tan(THREE.MathUtils.degToRad(followAngleY));
+		followPos.z -= cameraFaceVector.z * coefficient;
+
+		const alpha = 1 - Math.exp(-10 * delta);
+		controls.target.lerp(targetPos, alpha);
+		controls.object.position.lerp(followPos, alpha);
+	}
+
+	/**
+	 * 一次性聚焦（例如点击“回归视角”）。只允许保留一个显式相机 tween。
+	 */
 	private updateCamera(
 		controls: OrbitControls,
 		targetObject: THREE.Object3D,
@@ -1612,31 +1650,28 @@ export class GameRenderer {
 		if (!targetObject) return;
 		controls.enabled = false;
 		const targetPos = targetObject.position;
-		const followPos = new THREE.Vector3();
 		const cameraFaceVector = controls.object.getWorldDirection(new THREE.Vector3());
-		const coefficient = followDistance / cameraFaceVector.length();
-		const v1 = new THREE.Vector2(targetPos.x, targetPos.z);
-		const v2 = v1.add(new THREE.Vector2(cameraFaceVector.x, cameraFaceVector.z).multiplyScalar(coefficient).negate());
+		if (Math.abs(cameraFaceVector.x) + Math.abs(cameraFaceVector.z) < 0.000001) return;
 
-		followPos.x = v2.x;
+		// 保持原有的水平取景距离计算，只替换 tween 驱动方式，避免改变既有镜头构图。
+		const coefficient = followDistance / cameraFaceVector.length();
+		const followPos = targetPos.clone();
+		followPos.x -= cameraFaceVector.x * coefficient;
 		followPos.y = targetPos.y + followDistance * Math.tan(THREE.MathUtils.degToRad(followAngleY));
-		followPos.z = v2.y;
-		// controls.target.copy(targetPos);
-		gsap.to(controls.target, {
-			x: targetPos.x,
-			y: targetPos.y,
-			z: targetPos.z,
-			duration: 0.5,
-		});
-		gsap.to(controls.object.position, {
-			x: followPos.x,
-			y: followPos.y,
-			z: followPos.z,
-			duration: 0.5,
+		followPos.z -= cameraFaceVector.z * coefficient;
+
+		gsap.killTweensOf([controls.target, controls.object.position]);
+		const timeline = gsap.timeline({
 			onComplete: () => {
 				controls.enabled = true;
 			},
 		});
+		timeline.to(controls.target, { x: targetPos.x, y: targetPos.y, z: targetPos.z, duration: 0.5, ease: "power2.out" }, 0);
+		timeline.to(
+			controls.object.position,
+			{ x: followPos.x, y: followPos.y, z: followPos.z, duration: 0.5, ease: "power2.out" },
+			0,
+		);
 	}
 
 	private outlineModels(models: THREE.Object3D[]) {

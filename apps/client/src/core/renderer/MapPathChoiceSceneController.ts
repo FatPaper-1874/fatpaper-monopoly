@@ -304,11 +304,17 @@ export class MapPathChoiceSceneController {
 		const forkAnchor = this.options.getMapItemAnchor(request.currentMapItemId);
 		if (!forkAnchor) return;
 
+		const controlsEnabled = this.options.controls.enabled;
+		// 先冻结所有外部相机动画并同步 OrbitControls，再记录快照；
+		// 否则选路镜头会从角色跟随 tween 互相覆盖时的中间态开始，表现为轻微抖动。
+		this.options.controls.enabled = false;
+		gsap.killTweensOf([this.options.controls.target, this.options.controls.object.position]);
+		this.options.controls.update();
 		this.cameraSnapshot = {
 			position: this.options.camera.position.clone(),
 			target: this.options.controls.target.clone(),
 			up: this.options.camera.up.clone(),
-			controlsEnabled: this.options.controls.enabled,
+			controlsEnabled,
 			enableRotate: this.options.controls.enableRotate,
 			enablePan: this.options.controls.enablePan,
 			enableZoom: this.options.controls.enableZoom,
@@ -322,10 +328,6 @@ export class MapPathChoiceSceneController {
 			minPolarAngle: this.options.controls.minPolarAngle,
 			maxPolarAngle: this.options.controls.maxPolarAngle,
 		};
-		// 停止角色自动跟随留下的 tween，但保留其当前帧的相机位置，
-		// 让选路镜头从玩家正在看到的画面直接开始过渡。
-		gsap.killTweensOf([this.options.controls.target, this.options.camera.position]);
-		this.options.controls.enabled = false;
 
 		// 正上方鸟瞰：视线和画面中心都锁定分叉点。取景同时覆盖完整分支路线、
 		// 路线终点的高亮和“前往：下一格”标签，避免远处目标格被裁出画面。
