@@ -389,11 +389,14 @@ export const useMapDataStore = defineStore("MapData", {
 			}
 			for (const mapItem of pathMapItems) {
 				const outgoing = this.getPathsFrom(mapItem.id).filter((path) => pathMapItemIds.has(path.toMapItemId));
-				if (outgoing.length === 0) results.push({ level: "warning", code: "no-outgoing-path", message: "节点没有出边", mapItemId: mapItem.id });
-				else if (outgoing.every((path) => path.initEnable === false)) results.push({ level: "warning", code: "all-outgoing-disabled", message: "节点所有出边初始关闭", mapItemId: mapItem.id });
+				// 死路是合法设计：仅在存在出边但全部初始关闭时给出提示。
+				if (outgoing.length > 0 && outgoing.every((path) => path.initEnable === false)) {
+					results.push({ level: "warning", code: "all-outgoing-disabled", message: "节点所有出边初始关闭", mapItemId: mapItem.id });
+				}
 			}
 			const compatibility = this.getMapPathCompatibility();
-			if (!compatibility.compatible && this.mapPaths.length > 0) {
+			// mapIndex 仅用于旧版线性地图兼容；新图结构清空它后不应再因分支或死路报警。
+			if (this.mapIndex.length > 0 && !compatibility.compatible && this.mapPaths.length > 0) {
 				results.push({ level: "warning", code: "legacy-map-index-incompatible", message: `与旧版 mapIndex 不兼容：${compatibility.reason}` });
 			}
 			const startId = this.startMapItemId || this.mapIndex[0] || pathMapItems[0]?.id;
@@ -416,6 +419,26 @@ export const useMapDataStore = defineStore("MapData", {
 				results.push({ level: "warning", code: "start-not-path-node", message: "地图起点不是可行走的路径节点", mapItemId: this.startMapItemId });
 			}
 			return results;
+		},
+		replaceMapPaths(paths: MapPath[], label = "重建路径"): void {
+			const nextPaths = cloneDeep(paths);
+			const pathIds = new Set<string>();
+			const directedPairs = new Set<string>();
+			for (const path of nextPaths) {
+				if (!this.findMapItemById(path.fromMapItemId) || !this.findMapItemById(path.toMapItemId)) {
+					throw Error("路径的起点和终点必须是现有 MapItem");
+				}
+				if (pathIds.has(path.id)) throw Error("路径 ID 不能重复");
+				const pairKey = `${path.fromMapItemId}\u0000${path.toMapItemId}`;
+				if (directedPairs.has(pairKey)) throw Error("同一方向的路径只能存在一条");
+				pathIds.add(path.id);
+				directedPairs.add(pairKey);
+			}
+			this.mutateMapPaths(label, () => {
+				this.mapPaths = nextPaths;
+				this.clearMapIndexForPathTopologyChange();
+				eventBus.emit("map-paths-replaced");
+			});
 		},
 		assertMapPathCanBeSaved(path: MapPath, ignoredPathId?: string): void {
 			if (!this.findMapItemById(path.fromMapItemId) || !this.findMapItemById(path.toMapItemId)) throw Error("路径的起点和终点必须是现有 MapItem");

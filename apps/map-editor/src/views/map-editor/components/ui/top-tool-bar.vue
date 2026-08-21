@@ -45,11 +45,11 @@ const toolbarItems: ToolbarItem[] = [
 		component: defineAsyncComponent(() => import("../manager/role-manager.vue")),
 	},
 	{
-		key: "MapIndex",
-		text: "路径索引",
+		key: "MapPathGenerator",
+		text: "生成相邻路径",
 		icon: "fas fa-bezier-curve",
 		type: "modal",
-		component: defineAsyncComponent(() => import("../common/map-index-creator.vue")),
+		component: defineAsyncComponent(() => import("../common/map-path-generator.vue")),
 	},
 	{
 		key: "Building",

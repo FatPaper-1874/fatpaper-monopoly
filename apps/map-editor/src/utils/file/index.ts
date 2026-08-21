@@ -78,7 +78,7 @@ export function notifyLegacyMapPathsGenerated(mapData: GameMap): void {
 		title: "旧版地图路径已自动生成",
 		content:
 			`该地图是旧版地图，未包含新版路径配置，已根据旧版路径索引自动生成 ${count} 条路径。\n\n` +
-			"可在「路径索引 / 路径详情」中查看和调整；保存后路径将写入新版格式。",
+			"可在「生成相邻路径 / 路径详情」中查看和调整；保存后路径将写入新版格式。",
 		okText: "知道了",
 	});
 }
