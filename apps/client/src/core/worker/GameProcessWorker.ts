@@ -67,7 +67,7 @@ import {
 import { allRuntimeEnums } from "./runtime-enums";
 import { ButtonController } from "./ButtonController";
 
-import { Player } from "./class/Player";
+import { Player, type MapMovementHistoryEntry } from "./class/Player";
 import { Property } from "./class/Property";
 import { ChanceCard } from "./class/ChanceCard";
 import { compileTsToJs, randomString } from "@src/utils";
@@ -98,6 +98,16 @@ applyWorkerSandbox();
 const operationListener = new OperateListener();
 let gameProcess: GameProcess | null = null;
 const AI_LOG_PREFIX = "[AI Flow]";
+
+type MapMoveOption = {
+	path: MapPath;
+	targetMapItemId: string;
+	direction: MapMoveDirection;
+};
+
+function reverseMapMoveDirection(direction: MapMoveDirection): MapMoveDirection {
+	return direction === "forward" ? "reverse" : "forward";
+}
 let aiDecisionRequestSeq = 0;
 const pendingAIDecisionRequests = new Map<
 	string,
@@ -1662,11 +1672,11 @@ export class GameProcess implements IGameProcess {
 				this.setCurrentEventName(`${player.name} 正在走路`);
 				const { steps } = payload;
 				const totalSteps = Math.abs(steps);
+				const isForcedReverse = steps < 0;
 				const segments: MapMovementSegment[] = [];
 				const passedItems: { mapItemId: string; index: number; mapItem?: MapItem; pathId?: string; direction?: MapMoveDirection }[] = [];
 				let passedIndex = 0;
 				let completedSteps = 0;
-				let direction: MapMoveDirection = "forward";
 				let currentMapItemId =
 					player.positionMapItemId ??
 					getMapItemIdFromPositionIndex(player.positionIndex, this.mapData.mapIndex) ??
@@ -1679,83 +1689,169 @@ export class GameProcess implements IGameProcess {
 
 				try {
 					while (completedSteps < totalSteps) {
-						this.currentMapMoveDirection = direction;
-						let candidates = this.getAvailableMapPaths(currentMapItemId, direction);
+						let selectedOption: MapMoveOption | undefined;
+						let isHistoryBacktrack = false;
 
-						// 到达死路时沿反方向回退；两边均无可用路径则提前结束。
-						if (candidates.length === 0) {
-							direction = direction === "forward" ? "reverse" : "forward";
-							this.currentMapMoveDirection = direction;
-							candidates = this.getAvailableMapPaths(currentMapItemId, direction);
-							if (candidates.length === 0) {
-								console.warn("[MapPath] 玩家移动中断：当前位置没有已启用路径", {
+						const lastHistoryEntry = player.getLastMovementHistoryEntry();
+						if (lastHistoryEntry && lastHistoryEntry.toMapItemId !== currentMapItemId) {
+							console.warn("[MapPath] 玩家导航轨迹与当前位置不一致，已重置导航状态", {
+								playerId: player.id,
+								mapItemId: currentMapItemId,
+								lastHistoryEntry,
+							});
+							player.resetMapNavigation();
+						}
+
+						const historyEntry: MapMovementHistoryEntry | undefined = player.getLastMovementHistoryEntry();
+						const incomingMapItemId: string | undefined =
+							historyEntry && historyEntry.toMapItemId === currentMapItemId ? historyEntry.fromMapItemId : undefined;
+						const createHistoryReturnOption = (entry: MapMovementHistoryEntry): MapMoveOption | undefined => {
+							const path = this.getMapPathById(entry.pathId);
+							if (!path) return undefined;
+							return {
+								path,
+								targetMapItemId: entry.fromMapItemId,
+								direction: reverseMapMoveDirection(entry.direction),
+							};
+						};
+
+						if (isForcedReverse) {
+							if (!historyEntry) {
+								console.warn("[MapPath] 玩家强制倒退中断：没有匹配的移动历史", {
 									playerId: player.id,
 									mapItemId: currentMapItemId,
 									remainingSteps: totalSteps - completedSteps,
 								});
 								break;
 							}
-						}
+							selectedOption = createHistoryReturnOption(historyEntry);
+							if (!selectedOption) {
+								console.warn("[MapPath] 玩家强制倒退中断：历史路径已不存在", {
+									playerId: player.id,
+									pathId: historyEntry.pathId,
+								});
+								break;
+							}
+							isHistoryBacktrack = true;
+						} else {
+							const options = this.getMapMoveOptions(currentMapItemId);
+							const isNavigationUninitialized = !historyEntry && !player.returnFromMapItemId;
+							const selectableCandidates: MapMoveOption[] = player.returnFromMapItemId
+								? options.filter((option) =>
+									option.targetMapItemId !== player.returnFromMapItemId &&
+									option.targetMapItemId !== incomingMapItemId,
+								)
+								: options.filter((option) =>
+									option.targetMapItemId !== incomingMapItemId &&
+									(!isNavigationUninitialized || option.direction === "forward"),
+								);
 
-						let selectedPath = selectDefaultMapPath(candidates);
-						if (!selectedPath) break;
-
-						if (candidates.length > 1 && !player.isAI) {
-							const request: MapPathChoiceRequest = {
-								requestId: randomString(16),
-								playerId: player.id,
-								currentMapItemId,
-								direction,
-								remainingSteps: totalSteps - completedSteps,
-								candidates: candidates.map((path) => ({
-									pathId: path.id,
-									targetMapItemId: direction === "forward" ? path.toMapItemId : path.fromMapItemId,
-									direction,
-									name: path.name,
-									description: path.description,
-								})),
-							};
-							const defaultValue = { requestId: request.requestId, pathId: selectedPath.id };
-							const choicePromise = this.oncePlayerOperationAsync(player.id, OperateType.ChooseMapPath, {
-								timeout: this.defaultTimeoutMs,
-								defaultValue,
-							});
-							this.pendingMapPathChoice = request;
-							this.gameDataBroadcast();
-							this.sendToPlayer(player.id, {
-								type: SocketMsgType.MapPathChoiceRequest,
-								source: SocketMsgSource.Server,
-								data: request,
-							});
-
-							try {
-								const choice = await choicePromise;
-								if (choice?.requestId === request.requestId) {
-									selectedPath = candidates.find((path) => path.id === choice.pathId) ?? selectedPath;
+							if (selectableCandidates.length === 0) {
+								if (!historyEntry) {
+									console.warn("[MapPath] 玩家移动中断：当前位置没有可走路径", {
+										playerId: player.id,
+										mapItemId: currentMapItemId,
+										remainingSteps: totalSteps - completedSteps,
+									});
+									break;
 								}
-							} finally {
-								if (this.pendingMapPathChoice?.requestId === request.requestId) {
-									this.pendingMapPathChoice = undefined;
+								selectedOption = createHistoryReturnOption(historyEntry);
+								if (!selectedOption) {
+									console.warn("[MapPath] 玩家移动中断：回退路径已不存在", {
+										playerId: player.id,
+										pathId: historyEntry.pathId,
+									});
+									break;
+								}
+								isHistoryBacktrack = true;
+							} else {
+								const defaultPath = selectDefaultMapPath(selectableCandidates.map((option) => option.path));
+								const defaultSelectedOption: MapMoveOption =
+									selectableCandidates.find((option) => option.path.id === defaultPath?.id) ?? selectableCandidates[0]!;
+								selectedOption = defaultSelectedOption;
+
+								if (selectableCandidates.length > 1 && !player.isAI) {
+									const request: MapPathChoiceRequest = {
+										requestId: randomString(16),
+										playerId: player.id,
+										currentMapItemId,
+										direction: selectedOption.direction,
+										remainingSteps: totalSteps - completedSteps,
+										candidates: selectableCandidates.map((option) => ({
+											pathId: option.path.id,
+											targetMapItemId: option.targetMapItemId,
+											direction: option.direction,
+											name: option.path.name,
+											description: option.path.description,
+										})),
+									};
+									const defaultValue = { requestId: request.requestId, pathId: defaultSelectedOption.path.id };
+									const choicePromise = this.oncePlayerOperationAsync(player.id, OperateType.ChooseMapPath, {
+										timeout: this.defaultTimeoutMs,
+										defaultValue,
+									});
+									this.pendingMapPathChoice = request;
+									this.setCurrentEventName(`${player.name} 正在抉择分岔路`);
 									this.gameDataBroadcast();
+									this.sendToPlayer(player.id, {
+										type: SocketMsgType.MapPathChoiceRequest,
+										source: SocketMsgSource.Server,
+										data: request,
+									});
+
+									try {
+										const choice = await choicePromise;
+										if (choice?.requestId === request.requestId) {
+											selectedOption = selectableCandidates.find((option) => option.path.id === choice.pathId) ?? defaultSelectedOption;
+										}
+									} finally {
+										if (this.pendingMapPathChoice?.requestId === request.requestId) {
+											this.pendingMapPathChoice = undefined;
+											this.setCurrentEventName(`${player.name} 正在走路`);
+											this.gameDataBroadcast();
+										}
+									}
 								}
 							}
 						}
 
+						if (!selectedOption) break;
+						this.currentMapMoveDirection = selectedOption.direction;
 						const fromMapItemId = currentMapItemId;
-						const toMapItemId = direction === "forward" ? selectedPath.toMapItemId : selectedPath.fromMapItemId;
+						const toMapItemId = selectedOption.targetMapItemId;
 						const segment: MapMovementSegment = {
-							pathId: selectedPath.id,
-							direction,
+							pathId: selectedOption.path.id,
+							direction: selectedOption.direction,
 							fromMapItemId,
 							toMapItemId,
 							stepIndex: completedSteps,
 							totalSteps,
 						};
 
-						await this.walkSegment(player, direction === "forward" ? 1 : -1, segment, totalSteps, completedSteps + 1);
+						await this.walkSegment(
+							player,
+							selectedOption.direction === "forward" ? 1 : -1,
+							segment,
+							totalSteps,
+							completedSteps + 1,
+						);
 						player.setPositionMapItemId(toMapItemId);
 						const positionIndex = getPositionIndexFromMapItemId(toMapItemId, this.mapData.mapIndex);
 						if (positionIndex !== undefined) player.setPositionIndex(positionIndex);
+
+						if (isHistoryBacktrack) {
+							player.popLastMovementHistoryEntry();
+							player.returnFromMapItemId = isForcedReverse ? undefined : fromMapItemId;
+						} else {
+							player.recordMapMovement({
+								pathId: selectedOption.path.id,
+								fromMapItemId,
+								toMapItemId,
+								direction: selectedOption.direction,
+							});
+							player.returnFromMapItemId = undefined;
+						}
+
 						segments.push(segment);
 						completedSteps++;
 						currentMapItemId = toMapItemId;
@@ -1765,8 +1861,8 @@ export class GameProcess implements IGameProcess {
 								mapItemId: currentMapItemId,
 								index: passedIndex++,
 								mapItem: this.mapItems.get(currentMapItemId),
-								pathId: selectedPath.id,
-								direction,
+								pathId: selectedOption.path.id,
+								direction: selectedOption.direction,
 							});
 							try {
 								await this.handlePlayerPassedEvents(player, [currentMapItemId]);
@@ -1798,6 +1894,7 @@ export class GameProcess implements IGameProcess {
 				const walkId = randomString(16);
 				player.setPositionIndex(positionIndex);
 				player.setPositionMapItemId(mapItemId);
+				player.resetMapNavigation();
 				this.gameDataBroadcast();
 				this.gameBroadcast({
 					type: SocketMsgType.PlayerTp,
@@ -1818,6 +1915,7 @@ export class GameProcess implements IGameProcess {
 				const mappedPositionIndex = getPositionIndexFromMapItemId(mapItemId, this.mapData.mapIndex);
 				if (mappedPositionIndex !== undefined) player.setPositionIndex(mappedPositionIndex);
 				player.setPositionMapItemId(mapItemId);
+				player.resetMapNavigation();
 				this.gameDataBroadcast();
 				this.gameBroadcast({
 					type: SocketMsgType.PlayerTp,
@@ -2431,6 +2529,37 @@ export class GameProcess implements IGameProcess {
 
 	public getMapPathById(pathId: string): MapPath | undefined {
 		return this.mapData.mapPaths?.find((path) => path.id === pathId);
+	}
+
+	private getMapMoveOptions(mapItemId: string): MapMoveOption[] {
+		const options: MapMoveOption[] = [];
+		const targetMapItemIds = new Set<string>();
+
+		for (const path of this.mapData.mapPaths ?? []) {
+			if (!this.enabledPathIds.has(path.id)) continue;
+
+			let option: MapMoveOption | undefined;
+			if (path.fromMapItemId === mapItemId) {
+				option = { path, targetMapItemId: path.toMapItemId, direction: "forward" };
+			} else if (path.toMapItemId === mapItemId) {
+				option = { path, targetMapItemId: path.fromMapItemId, direction: "reverse" };
+			}
+
+			if (!option) continue;
+			if (targetMapItemIds.has(option.targetMapItemId)) {
+				console.warn("[MapPath] 检测到重复的双向移动目标，已忽略后续路径", {
+					mapItemId,
+					targetMapItemId: option.targetMapItemId,
+					pathId: path.id,
+				});
+				continue;
+			}
+
+			targetMapItemIds.add(option.targetMapItemId);
+			options.push(option);
+		}
+
+		return options;
 	}
 
 	public getAvailableMapPaths(mapItemId: string, direction: MapMoveDirection): MapPath[] {

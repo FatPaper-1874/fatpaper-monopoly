@@ -13,6 +13,7 @@ import {
 	IPlayer,
 	IProperty,
 	MoneyTagType,
+	MapMoveDirection,
 	PlayerCommandMap,
 	PlayerInfo,
 	Role,
@@ -32,6 +33,13 @@ import type { PlayerSnapshot } from "@src/core/save/types";
 import { ChanceCard } from "./ChanceCard";
 import { pickSerializableFields } from "../utils/serialize";
 
+export interface MapMovementHistoryEntry {
+	pathId: string;
+	fromMapItemId: string;
+	toMapItemId: string;
+	direction: MapMoveDirection;
+}
+
 export class Player implements IPlayer {
 	public id: string;
 	public name: string;
@@ -43,6 +51,10 @@ export class Player implements IPlayer {
 	public positionIndex: number;
 	/** 玩家当前位置的唯一运行时真相。 */
 	public positionMapItemId?: string;
+	/** 尚未被回退的实际行走轨迹，同时用于分岔选择和 walk(-n)。 */
+	public movementHistory: MapMovementHistoryEntry[] = [];
+	/** 刚从该节点退回当前位置时设置；用于在路口排除死路和进入分支前的来路。 */
+	public returnFromMapItemId?: string;
 	public isStop: number; //是否停止回合
 	public isBankrupted: boolean = false; //是否破产
 	public isOffline: boolean; //是否断线
@@ -267,6 +279,23 @@ export class Player implements IPlayer {
 		this.positionMapItemId = mapItemId;
 	}
 
+	public resetMapNavigation() {
+		this.movementHistory = [];
+		this.returnFromMapItemId = undefined;
+	}
+
+	public recordMapMovement(entry: MapMovementHistoryEntry) {
+		this.movementHistory.push(entry);
+	}
+
+	public getLastMovementHistoryEntry(): MapMovementHistoryEntry | undefined {
+		return this.movementHistory[this.movementHistory.length - 1];
+	}
+
+	public popLastMovementHistoryEntry(): MapMovementHistoryEntry | undefined {
+		return this.movementHistory.pop();
+	}
+
 	public setBankrupted(isBankrupted: boolean) {
 		const becameBankrupted = isBankrupted && !this.isBankrupted;
 		this.isBankrupted = isBankrupted;
@@ -324,6 +353,7 @@ export class Player implements IPlayer {
 			"isAI", "isThinking", "infoDisplay",
 			"name", "roleId",
 			"aiThinkingRequestCount",
+			"movementHistory", "returnFromMapItemId",
 			"exportData",
 		]);
 
@@ -470,6 +500,16 @@ export class Player implements IPlayer {
 		// 兼容旧存档：缺少位置 ID 时按旧线性索引回填；无效索引再回退地图起点。
 		if (!this.positionMapItemId) {
 			this.positionMapItemId = gameProcess.mapData.mapIndex[this.positionIndex] ?? gameProcess.mapData.startMapItemId;
+		}
+
+		const lastMovement = this.getLastMovementHistoryEntry();
+		if (lastMovement && lastMovement.toMapItemId !== this.positionMapItemId) {
+			console.warn("[MapPath] 存档中的导航轨迹与当前位置不一致，已重置导航状态", {
+				playerId: this.id,
+				positionMapItemId: this.positionMapItemId,
+				lastMovement,
+			});
+			this.resetMapNavigation();
 		}
 
 		// 同步 roleId 到 user 对象（客户端通过 PlayerInfo.user.roleId 渲染角色模型）
