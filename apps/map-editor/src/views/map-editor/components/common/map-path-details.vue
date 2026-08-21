@@ -28,6 +28,15 @@ watch(activeMapPath, (path) => {
 // 	return mapItem ? `${mapItem.type.name} (${id})` : id;
 // }
 
+async function copyId(id: string) {
+	try {
+		await navigator.clipboard.writeText(id);
+		message.success("ID 已复制到剪贴板");
+	} catch (err) {
+		message.error("复制失败，请手动选择复制");
+	}
+}
+
 function savePath() {
 	const path = activeMapPath.value;
 	if (!path) return;
@@ -54,9 +63,24 @@ function clearPathSelection() {
 <template>
 	<a-card v-if="activeMapPath" title="路径详情" class="map-path-details">
 		<a-descriptions :column="1" size="small" bordered>
-			<a-descriptions-item label="路径 ID">{{ activeMapPath.id }}</a-descriptions-item>
-			<a-descriptions-item label="起点">{{ activeMapPath.fromMapItemId }}</a-descriptions-item>
-			<a-descriptions-item label="终点">{{ activeMapPath.toMapItemId }}</a-descriptions-item>
+			<a-descriptions-item label="路径 ID">
+				<div class="id-container">
+					<span class="id-text">{{ activeMapPath.id }}</span>
+					<a-button type="link" size="mini" @click="copyId(activeMapPath.id)">复制ID</a-button>
+				</div>
+			</a-descriptions-item>
+			<a-descriptions-item label="起点">
+				<div class="id-container">
+					<span class="id-text">{{ activeMapPath.fromMapItemId }}</span>
+					<a-button type="link" size="mini" @click="copyId(activeMapPath.fromMapItemId)">复制ID</a-button>
+				</div>
+			</a-descriptions-item>
+			<a-descriptions-item label="终点">
+				<div class="id-container">
+					<span class="id-text">{{ activeMapPath.toMapItemId }}</span>
+					<a-button type="link" size="mini" @click="copyId(activeMapPath.toMapItemId)">复制ID</a-button>
+				</div>
+			</a-descriptions-item>
 
 		</a-descriptions>
 
@@ -83,6 +107,17 @@ function clearPathSelection() {
 <style lang="scss" scoped>
 .map-path-details {
 	width: 360px;
+
+	.id-container {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+	}
+
+	.id-text {
+		word-break: break-all;
+	}
 }
 
 .path-form {
