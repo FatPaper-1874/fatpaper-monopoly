@@ -1,6 +1,6 @@
 import { GameLinkItem, TargetSelectType } from "../../../../types/enums/game/game";
 import { OperateType } from "../../../../types/enums/game/game-process";
-import { GameMap, MapMoveDirection, MapPath } from "../map";
+import { GameMap, MapMoveDirection, MapPath, MapPathCanPass } from "../map";
 import { PlayerOperationResult, ServerSocketMessage } from "../socket";
 import { IPlayer, IProperty, IChanceCard } from "./entities"; // 引用 entities
 import { ChanceCardInfo } from "./infos"; // 引用 infos
@@ -73,8 +73,11 @@ export interface IGameProcess extends IGameProcessCustomFields {
 	/** 查询路径是否在当前会话中启用。 */
 	isMapPathEnabled?(pathId: string): boolean;
 
-	/** 设置路径在当前会话中的启用状态，不修改静态地图数据。 */
-	setMapPathEnabled?(pathId: string, enabled: boolean): void;
+	/**
+	 * 设置路径在当前会话中的启用状态，不修改静态地图数据。
+	 * 启用时可注册通行条件；未提供条件时清除旧条件。关闭时始终清除条件。
+	 */
+	setMapPathEnabled?(pathId: string, enabled: boolean, canPass?: MapPathCanPass): void;
 
 	/** 游戏设置 */
 	gameSetting: GameSetting;

@@ -32,6 +32,7 @@ import {
 	MapMoveDirection,
 	MapMovementSegment,
 	MapPath,
+	MapPathCanPass,
 	MapPathChoiceRequest,
 	OperateType,
 	PlayerOperationResult,
@@ -579,6 +580,8 @@ export class GameProcess implements IGameProcess {
 	public mapEvents: Map<string, RuntimeMapEvent> = new Map();
 	private mapPathAdjacency: MapPathAdjacency;
 	private enabledPathIds: Set<string>;
+	/** 当前游戏会话中注册的路径通行条件，不参与序列化。 */
+	private mapPathCanPassConditions: Map<string, MapPathCanPass> = new Map();
 	private currentMapMoveDirection?: MapMoveDirection;
 	private pendingMapPathChoice?: MapPathChoiceRequest;
 
@@ -1677,6 +1680,7 @@ export class GameProcess implements IGameProcess {
 				const passedItems: { mapItemId: string; index: number; mapItem?: MapItem; pathId?: string; direction?: MapMoveDirection }[] = [];
 				let passedIndex = 0;
 				let completedSteps = 0;
+				const rejectedAutomaticPathIds = new Set<string>();
 				let currentMapItemId =
 					player.positionMapItemId ??
 					getMapItemIdFromPositionIndex(player.positionIndex, this.mapData.mapIndex) ??
@@ -1691,6 +1695,7 @@ export class GameProcess implements IGameProcess {
 					while (completedSteps < totalSteps) {
 						let selectedOption: MapMoveOption | undefined;
 						let isHistoryBacktrack = false;
+						let isAutomaticPathSelection = false;
 
 						const lastHistoryEntry = player.getLastMovementHistoryEntry();
 						if (lastHistoryEntry && lastHistoryEntry.toMapItemId !== currentMapItemId) {
@@ -1765,12 +1770,24 @@ export class GameProcess implements IGameProcess {
 								}
 								isHistoryBacktrack = true;
 							} else {
-								const defaultPath = selectDefaultMapPath(selectableCandidates.map((option) => option.path));
+								isAutomaticPathSelection = player.isAI || selectableCandidates.length === 1;
+								const candidateOptions = isAutomaticPathSelection
+									? selectableCandidates.filter((option) => !rejectedAutomaticPathIds.has(option.path.id))
+									: selectableCandidates;
+								if (candidateOptions.length === 0) {
+									console.warn("[MapPath] 玩家移动中断：所有自动选路候选均无法通行", {
+										playerId: player.id,
+										mapItemId: currentMapItemId,
+										remainingSteps: totalSteps - completedSteps,
+									});
+									break;
+								}
+								const defaultPath = selectDefaultMapPath(candidateOptions.map((option) => option.path));
 								const defaultSelectedOption: MapMoveOption =
-									selectableCandidates.find((option) => option.path.id === defaultPath?.id) ?? selectableCandidates[0]!;
+									candidateOptions.find((option) => option.path.id === defaultPath?.id) ?? candidateOptions[0]!;
 								selectedOption = defaultSelectedOption;
 
-								if (selectableCandidates.length > 1 && !player.isAI) {
+								if (!isAutomaticPathSelection) {
 									const request: MapPathChoiceRequest = {
 										requestId: randomString(16),
 										playerId: player.id,
@@ -1816,6 +1833,15 @@ export class GameProcess implements IGameProcess {
 						}
 
 						if (!selectedOption) break;
+						if (selectedOption.direction === "forward" && !(await this.canPassMapPath(player, selectedOption.path))) {
+							if (isAutomaticPathSelection) {
+								rejectedAutomaticPathIds.add(selectedOption.path.id);
+								continue;
+							}
+							this.setCurrentEventName(`${player.name} 正在抉择分岔路`);
+							continue;
+						}
+						rejectedAutomaticPathIds.clear();
 						this.currentMapMoveDirection = selectedOption.direction;
 						const fromMapItemId = currentMapItemId;
 						const toMapItemId = selectedOption.targetMapItemId;
@@ -2489,6 +2515,19 @@ export class GameProcess implements IGameProcess {
 		return mapEvent.type === MapEventType.PassedEvent;
 	}
 
+	/** 执行当前会话中注册的路径通行条件。 */
+	private async canPassMapPath(player: IPlayer, path: MapPath): Promise<boolean> {
+		const canPass = this.mapPathCanPassConditions.get(path.id);
+		if (!canPass) return true;
+
+		try {
+			return await canPass(player, path);
+		} catch (error) {
+			console.error("[MapPath] 路径通行条件执行失败", { pathId: path.id, error });
+			return false;
+		}
+	}
+
 	/**
 	 * 走一段连续的路并等待动画完成
 	 * @param player - 玩家
@@ -2568,10 +2607,16 @@ export class GameProcess implements IGameProcess {
 
 	public isMapPathEnabled(pathId: string): boolean { return this.enabledPathIds.has(pathId); }
 
-	public setMapPathEnabled(pathId: string, enabled: boolean): void {
+	public setMapPathEnabled(pathId: string, enabled: boolean, canPass?: MapPathCanPass): void {
 		if (!this.getMapPathById(pathId)) throw new Error(`找不到地图路径: ${pathId}`);
-		if (enabled) this.enabledPathIds.add(pathId);
-		else this.enabledPathIds.delete(pathId);
+		if (enabled) {
+			this.enabledPathIds.add(pathId);
+			if (canPass) this.mapPathCanPassConditions.set(pathId, canPass);
+			else this.mapPathCanPassConditions.delete(pathId);
+		} else {
+			this.enabledPathIds.delete(pathId);
+			this.mapPathCanPassConditions.delete(pathId);
+		}
 		this.gameDataBroadcast();
 	}
 	private getPlayerById(id: string) {
@@ -4564,6 +4609,9 @@ export class GameProcess implements IGameProcess {
 	}
 
 	public async restoreFromSnapshot(snapshot: SaveSnapshot, aiPlayerIds: string[]): Promise<void> {
+		// 通行条件是 Worker 会话内存状态，恢复存档时不得继承。
+		this.mapPathCanPassConditions.clear();
+
 		// 将缺失的存档玩家标记为 AI
 		for (const playerId of aiPlayerIds) {
 			const player = this.players.get(playerId);

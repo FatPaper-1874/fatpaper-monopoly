@@ -2,6 +2,7 @@ import { ModifierTemplate } from "./action-system/modifier";
 import { ChanceCardInfo, GamePhaseInfo, GameSetting, UISchema, UITemplate } from "./game-process";
 import { MapItem, MapItemType, Street, Role, MapEvent, GameMapInfo, CustomUI } from "./item";
 import { FormSchema } from "./util";
+import type { IPlayer } from "./game-process/entities";
 
 /**
  * 游戏设置表单接口
@@ -32,6 +33,11 @@ export interface MapPath {
 	/** 仅供编辑器识别和展示，不参与运行时选路 */
 	description?: string;
 }
+/**
+ * 地图路径的运行时通行条件。
+ * 条件仅存在于当前游戏会话，允许异步执行并产生副作用。
+ */
+export type MapPathCanPass = (player: IPlayer, path: MapPath) => boolean | Promise<boolean>;
 
 /** 一次地图移动沿路径原始方向还是反向进行。 */
 export type MapMoveDirection = "forward" | "reverse";
