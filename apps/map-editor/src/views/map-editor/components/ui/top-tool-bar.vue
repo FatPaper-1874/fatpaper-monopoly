@@ -46,7 +46,7 @@ const toolbarItems: ToolbarItem[] = [
 	},
 	{
 		key: "MapPathGenerator",
-		text: "生成相邻路径",
+		text: "地图路径",
 		icon: "fas fa-bezier-curve",
 		type: "modal",
 		component: defineAsyncComponent(() => import("../common/map-path-generator.vue")),
