@@ -1937,7 +1937,7 @@ export class MapRenderer {
 		const isHovered = this.hoveredMapPathId === path.id;
 		const disabled = path.initEnable === false;
 		const color = isActive ? 0x65ff75 : isHovered ? 0xffca3a : disabled ? 0x8f5353 : 0x18b7d5;
-		const lineRadius = isActive || isHovered ? 0.055 : 0.04;
+		const lineRadius = isActive || isHovered ? 0.045 : 0.032;
 		const line = new THREE.Mesh(
 			new THREE.TubeGeometry(new THREE.LineCurve3(start, end), 1, lineRadius, 8, false),
 			new THREE.MeshBasicMaterial({
@@ -1971,6 +1971,27 @@ export class MapRenderer {
 		visual.renderOrder = 10;
 		visual.userData.mapPathId = path.id;
 		visual.add(line, createEndpoint(start), createEndpoint(end));
+
+		// 箭头尖端朝向终点，明确表示路径从 fromMapItemId 指向 toMapItemId。
+		if (length > 0.001) {
+			const direction = end.clone().sub(start).normalize();
+			const arrowLength = Math.min(0.3, Math.max(0.14, length * 0.24));
+			const arrow = new THREE.Mesh(
+				new THREE.ConeGeometry(arrowLength * 0.35, arrowLength, 16),
+				new THREE.MeshBasicMaterial({
+					color,
+					transparent: true,
+					opacity: disabled ? 0.7 : 1,
+					depthTest: false,
+					depthWrite: false,
+				}),
+			);
+			// ConeGeometry 默认沿 +Y 轴；旋转后使锥尖指向路径终点。
+			arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+			arrow.position.copy(end).addScaledVector(direction, -arrowLength / 2);
+			arrow.renderOrder = 11;
+			visual.add(arrow);
+		}
 		const hit = length < 0.001
 			? new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }))
 			: new THREE.Mesh(

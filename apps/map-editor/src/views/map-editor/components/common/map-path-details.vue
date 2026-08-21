@@ -48,6 +48,21 @@ function savePath() {
 	message.success("路径详情已保存", 1);
 }
 
+function reversePathEndpoints() {
+	const path = activeMapPath.value;
+	if (!path) return;
+
+	try {
+		mapDataStore.updateMapPath(path.id, {
+			fromMapItemId: path.toMapItemId,
+			toMapItemId: path.fromMapItemId,
+		});
+		message.success("路径起点和终点已反转", 1);
+	} catch (error) {
+		const errorMessage = error instanceof Error ? error.message : "未知错误";
+		message.error(`反转路径失败：${errorMessage}`, 3);
+	}
+}
 
 function deletePath() {
 	if (!activeMapPath.value) return;
@@ -98,6 +113,7 @@ function clearPathSelection() {
 
 		<a-space wrap>
 			<a-button type="primary" @click="savePath">保存</a-button>
+			<a-button @click="reversePathEndpoints">反转起终点</a-button>
 			<a-button @click="clearPathSelection">取消选择</a-button>
 			<a-button danger @click="deletePath">删除</a-button>
 		</a-space>
