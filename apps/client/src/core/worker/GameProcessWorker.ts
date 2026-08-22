@@ -2228,7 +2228,7 @@ export class GameProcess implements IGameProcess {
 			source: SocketMsgSource.Server,
 			data: undefined,
 		};
-		if (player.money > property.sellCost) {
+		if (player.money >= property.sellCost) {
 			await property.setOwner(player);
 			this.gameDataBroadcast();
 			this.msgNotifyBroadcast("info", `${player.name} 买下了地皮 ${property.name}`);
@@ -2251,8 +2251,8 @@ export class GameProcess implements IGameProcess {
 			source: SocketMsgSource.Server,
 			data: undefined,
 		};
-		if (player.money > property.sellCost) {
-			property.levelUp();
+		if (player.money >= property.buildCost) {
+			await property.levelUp();
 			this.gameDataBroadcast();
 			this.msgNotifyBroadcast("info", `${player.name}把地皮${property.name}升到了${property.level}级`);
 			this.gameLogBroadcast(
@@ -2261,7 +2261,7 @@ export class GameProcess implements IGameProcess {
 					property.id,
 				)} 升到了 ${property.level} 级`,
 			);
-			await player.cost(property.sellCost, MoneyTag.SYSTEM);
+			await player.cost(property.buildCost, MoneyTag.SYSTEM);
 		} else {
 			msgToSend.msg = { type: "error", content: "不够钱啊穷鬼" };
 			sendToUsers([player.id], msgToSend);
