@@ -1720,15 +1720,7 @@ export class GameProcess implements IGameProcess {
 							};
 						};
 
-						if (isForcedReverse) {
-							if (!historyEntry) {
-								console.warn("[MapPath] 玩家强制倒退中断：没有匹配的移动历史", {
-									playerId: player.id,
-									mapItemId: currentMapItemId,
-									remainingSteps: totalSteps - completedSteps,
-								});
-								break;
-							}
+						if (isForcedReverse && historyEntry) {
 							selectedOption = createHistoryReturnOption(historyEntry);
 							if (!selectedOption) {
 								console.warn("[MapPath] 玩家强制倒退中断：历史路径已不存在", {
@@ -1739,20 +1731,19 @@ export class GameProcess implements IGameProcess {
 							}
 							isHistoryBacktrack = true;
 						} else {
-							const options = this.getMapMoveOptions(currentMapItemId);
-							const isNavigationUninitialized = !historyEntry && !player.returnFromMapItemId;
-							const selectableCandidates: MapMoveOption[] = player.returnFromMapItemId
-								? options.filter((option) =>
-									option.targetMapItemId !== player.returnFromMapItemId &&
-									option.targetMapItemId !== incomingMapItemId,
-								)
-								: options.filter((option) =>
-									option.targetMapItemId !== incomingMapItemId &&
-									(!isNavigationUninitialized || option.direction === "forward"),
-								);
+							const direction: MapMoveDirection = isForcedReverse ? "reverse" : "forward";
+							const options = this.getMapMoveOptions(currentMapItemId, direction);
+							const selectableCandidates: MapMoveOption[] = isForcedReverse
+								? options
+								: player.returnFromMapItemId
+									? options.filter((option) =>
+										option.targetMapItemId !== player.returnFromMapItemId &&
+										option.targetMapItemId !== incomingMapItemId,
+									)
+									: options.filter((option) => option.targetMapItemId !== incomingMapItemId);
 
 							if (selectableCandidates.length === 0) {
-								if (!historyEntry) {
+								if (isForcedReverse || !historyEntry) {
 									console.warn("[MapPath] 玩家移动中断：当前位置没有可走路径", {
 										playerId: player.id,
 										mapItemId: currentMapItemId,
@@ -1868,13 +1859,16 @@ export class GameProcess implements IGameProcess {
 						if (isHistoryBacktrack) {
 							player.popLastMovementHistoryEntry();
 							player.returnFromMapItemId = isForcedReverse ? undefined : fromMapItemId;
-						} else {
+						} else if (!isForcedReverse) {
 							player.recordMapMovement({
 								pathId: selectedOption.path.id,
 								fromMapItemId,
 								toMapItemId,
 								direction: selectedOption.direction,
 							});
+							player.returnFromMapItemId = undefined;
+						} else {
+							// 无历史轨迹时按入边倒退，不将该临时反向路线写入前进行走轨迹。
 							player.returnFromMapItemId = undefined;
 						}
 
@@ -2570,26 +2564,22 @@ export class GameProcess implements IGameProcess {
 		return this.mapData.mapPaths?.find((path) => path.id === pathId);
 	}
 
-	private getMapMoveOptions(mapItemId: string): MapMoveOption[] {
+	private getMapMoveOptions(mapItemId: string, direction: MapMoveDirection = "forward"): MapMoveOption[] {
 		const options: MapMoveOption[] = [];
 		const targetMapItemIds = new Set<string>();
 
-		for (const path of this.mapData.mapPaths ?? []) {
-			if (!this.enabledPathIds.has(path.id)) continue;
-
-			let option: MapMoveOption | undefined;
-			if (path.fromMapItemId === mapItemId) {
-				option = { path, targetMapItemId: path.toMapItemId, direction: "forward" };
-			} else if (path.toMapItemId === mapItemId) {
-				option = { path, targetMapItemId: path.fromMapItemId, direction: "reverse" };
-			}
-
-			if (!option) continue;
+		for (const path of this.getAvailableMapPaths(mapItemId, direction)) {
+			const option: MapMoveOption = {
+				path,
+				targetMapItemId: direction === "forward" ? path.toMapItemId : path.fromMapItemId,
+				direction,
+			};
 			if (targetMapItemIds.has(option.targetMapItemId)) {
-				console.warn("[MapPath] 检测到重复的双向移动目标，已忽略后续路径", {
+				console.warn("[MapPath] 检测到重复的移动目标，已忽略后续路径", {
 					mapItemId,
 					targetMapItemId: option.targetMapItemId,
 					pathId: path.id,
+					direction,
 				});
 				continue;
 			}
