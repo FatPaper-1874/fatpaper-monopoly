@@ -412,7 +412,7 @@ export class Player implements IPlayer {
 		await this.commandBus.execute({ type: "player.walk", payload: { steps } });
 	}
 
-	/** @deprecated 仅保留旧线性地图和 effectCode 兼容。 */
+	/** @deprecated 仅保留旧线性地图和 effectCode 兼容；请改用 tpToMapItem(mapItemId)。 */
 	public async tp(positionIndex: number): Promise<void> {
 		await this.commandBus.execute({ type: "player.tp", payload: { positionIndex } });
 	}

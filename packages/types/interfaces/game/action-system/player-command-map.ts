@@ -83,7 +83,7 @@ export interface PlayerCommandMap extends ICommandMap {
 
 	/**
 	 * 玩家传送到指定位置。
-	 * @deprecated 仅供旧线性地图和 effectCode 兼容；新逻辑请使用 player.tp.map-item。
+	 * @deprecated 仅供旧线性地图和 effectCode 兼容；请改用 player.tp.map-item（或 player.tpToMapItem(mapItemId)）。
 	 */
 	"player.tp": {
 		payload: { positionIndex: number };

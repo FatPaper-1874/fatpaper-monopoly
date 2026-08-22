@@ -174,7 +174,7 @@ export interface IPlayer {
 
 	/**
 	 * 传送到指定位置
-	 * @deprecated 仅用于旧线性地图兼容。
+	 * @deprecated 仅用于旧线性地图兼容；请改用 tpToMapItem(mapItemId)。
 	 * @param positionIndex - 目标位置索引
 	 */
 	tp: (positionIndex: number) => Promise<void>;
