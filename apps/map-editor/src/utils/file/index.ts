@@ -5,9 +5,10 @@ import { gzipCompress, normalizeGameMap, normalizePhases } from "@mine-monopoly/
 import { useEditorStore, useMapDataStore, useResourceStore } from "@src/stores";
 import { eventBus } from "@src/utils/event-bus";
 import { getInitPhase } from "@src/views/map-editor/components/manager/process-manager/utils/init-phase";
-import { message, Modal } from "ant-design-vue";
+import { Alert, message, Modal } from "ant-design-vue";
 import { generateShortId } from "@src/utils/short-id";
 import { __MAP_ENCRYPT_KEY__ } from "@src/global.config";
+import { h } from "vue";
 import { getFsApi } from "@src/services/fs-api";
 
 /**
@@ -76,9 +77,15 @@ export function notifyLegacyMapPathsGenerated(mapData: GameMap): void {
 	const count = Array.isArray(mapData.mapIndex) ? mapData.mapIndex.length : 0;
 	Modal.warning({
 		title: "旧版地图路径已自动生成",
-		content:
-			`该地图是旧版地图，未包含新版路径配置，已根据旧版路径索引自动生成 ${count} 条路径。\n\n` +
-			"可在「生成相邻路径 / 路径详情」中查看和调整；保存后路径将写入新版格式。",
+		content: h("div", [
+			h("p", `该地图是旧版地图，未包含新版路径配置，已根据旧版路径索引自动生成 ${count} 条路径。`),
+			h("p", "可在「生成相邻路径 / 路径详情」中查看和调整；保存后路径将写入新版格式。"),
+			h(Alert, {
+				type: "warning",
+				showIcon: true,
+				message: "旧版 effectCode 中的 player.tp(positionIndex) 接口即将废弃，请改用 player.tpToMapItem(mapItemId)。",
+			}),
+		]),
 		okText: "知道了",
 	});
 }
