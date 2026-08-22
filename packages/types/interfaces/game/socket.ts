@@ -55,9 +55,43 @@ type Base64String = string;
  * 房间地图信息类型
  * 可以从服务器获取或使用自定义数据
  */
+export interface CustomMapDescriptor {
+	protocolVersion: 1;
+	/** 每次选图或换图生成，用于隔离迟到的异步消息。 */
+	mapLoadSessionId: string;
+	/** 房主实际选择的自定义地图原始文件 SHA-256。 */
+	fileSha256: string;
+	fileSize: number;
+	fileFormat: "fpmap" | "mmmap";
+	/** 房主选择的地图原始文件名，用于客机缓存时保留同名。 */
+	fileName: string;
+	mapName: string;
+	mapId?: string;
+}
+
+export interface MapLocalCheckData {
+	mapLoadSessionId: string;
+	fileSha256: string;
+	status: "hit" | "miss" | "invalid" | "unsupported";
+	matchedFileName?: string;
+	reason?: string;
+}
+
+export interface MapTransferRequestData {
+	mapLoadSessionId: string;
+	fileSha256: string;
+	reason: "local-miss" | "local-load-failed" | "local-hash-mismatch";
+}
+
 export type RoomMapInfo =
 	| { from: "server"; data: string }
-	| { from: "custom"; data: Base64String | Uint8Array };
+	| {
+			from: "custom";
+			data: Base64String | Uint8Array;
+			/** 原始文件名仅用于展示和推断格式，不参与匹配。 */
+			fileName?: string;
+			descriptor?: CustomMapDescriptor;
+		};
 
 /**
  * Socket 消息接口
@@ -811,6 +845,24 @@ export interface SocketMessageDataType {
 		server: never;
 	};
 
+	/** 自定义地图描述：不包含地图原始字节。 */
+	[SocketMsgType.CustomMapDescriptor]: {
+		client: never;
+		server: CustomMapDescriptor;
+	};
+
+	/** 客机对本地地图仓库的匹配结果。 */
+	[SocketMsgType.MapLocalCheck]: {
+		client: MapLocalCheckData;
+		server: never;
+	};
+
+	/** 客机请求房主发送当前自定义地图。 */
+	[SocketMsgType.MapTransferRequest]: {
+		client: MapTransferRequestData;
+		server: never;
+	};
+
 	/**
 	 * 地图事件动态变更
 	 * 服务器通知客户端地图事件发生了变化
@@ -844,6 +896,8 @@ export interface SafeModePanelMessage {
  * 地图分块传输开始消息
  */
 export interface MapChunkStartData {
+	/** 当前自定义地图加载会话；旧主机可能未下发。 */
+	mapLoadSessionId?: string;
 	/** 总块数 */
 	totalChunks: number;
 	/** 每块大小（字节） */
@@ -860,6 +914,8 @@ export interface MapChunkStartData {
  * 地图数据分块消息
  */
 export interface MapChunkData {
+	/** 当前自定义地图加载会话；二进制包解析后填充。 */
+	mapLoadSessionId?: string;
 	/** 当前块索引 (0-based) */
 	chunkIndex: number;
 	/** 分块数据：二进制直传时为 Uint8Array，兼容旧版 base64 字符串 */
@@ -870,6 +926,8 @@ export interface MapChunkData {
  * 地图分块传输结束消息
  */
 export interface MapChunkEndData {
+	/** 当前自定义地图加载会话；旧主机可能未下发。 */
+	mapLoadSessionId?: string;
 	/** 是否成功 */
 	success: boolean;
 }
@@ -878,6 +936,8 @@ export interface MapChunkEndData {
  * 地图分块接收确认消息
  */
 export interface MapChunkAckData {
+	/** 当前自定义地图加载会话。 */
+	mapLoadSessionId?: string;
 	/** 已确认的块索引 */
 	chunkIndex: number;
 }
@@ -886,6 +946,8 @@ export interface MapChunkAckData {
  * 地图分块中止消息
  */
 export interface MapChunkAbortData {
+	/** 当前自定义地图加载会话。 */
+	mapLoadSessionId?: string;
 	/** 中止原因 */
 	reason: string;
 }

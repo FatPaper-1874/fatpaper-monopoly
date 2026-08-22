@@ -16,6 +16,7 @@ import path from "node:path";
 import fs from "fs/promises";
 import fsSync from "fs";
 import url from "node:url";
+import { createHash } from "node:crypto";
 import { autoUpdater } from "electron-updater";
 import log from "electron-log";
 import { loadUpdateSources, type UpdateSource } from "./update-config.js";
@@ -753,6 +754,329 @@ ipcMain.handle("map-cache:open-folder", async () => {
 	await fs.mkdir(cacheDir, { recursive: true });
 	await shell.openPath(cacheDir);
 	return cacheDir;
+});
+
+
+// ============================================================
+// 本地地图仓库（固定在可执行文件同级 game-map/）
+// ============================================================
+type LocalMapFormat = "fpmap" | "mmmap";
+type LocalMapSource = "imported" | "scanned" | "p2p-cache" | "server-cache";
+interface LocalMapIndexEntry {
+	fileName: string;
+	format: LocalMapFormat;
+	size: number;
+	mtimeMs: number;
+	sha256: string;
+	addedAt: string;
+	source: LocalMapSource;
+	lastAccessedAt?: string;
+}
+interface LocalMapIndex {
+	version: 1;
+	updatedAt: string;
+	entries: LocalMapIndexEntry[];
+}
+interface LocalMapDirectoryStatus {
+	path: string;
+	readable: boolean;
+	writable: boolean;
+}
+
+const LOCAL_MAP_MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024;
+const LOCAL_MAP_CACHE_MAX_SIZE = 500 * 1024 * 1024;
+
+function getLocalMapDirectory(): string {
+	return path.join(path.dirname(process.execPath), "game-map");
+}
+
+function getLocalMapIndexPath(): string {
+	return path.join(getLocalMapDirectory(), "index.json");
+}
+
+function getLocalMapFormat(fileName: string): LocalMapFormat | undefined {
+	const extension = path.extname(fileName).toLowerCase();
+	if (extension === ".fpmap") return "fpmap";
+	if (extension === ".mmmap") return "mmmap";
+	return undefined;
+}
+
+function isSafeLocalMapFileName(fileName: string): boolean {
+	return Boolean(getLocalMapFormat(fileName))
+		&& fileName === path.basename(fileName)
+		&& !fileName.includes("..")
+		&& !fileName.includes("/")
+		&& !fileName.includes("\\");
+}
+
+function isSha256(value: unknown): value is string {
+	return typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
+}
+
+function isLocalMapIndexEntry(value: unknown): value is LocalMapIndexEntry {
+	if (!value || typeof value !== "object") return false;
+	const entry = value as Partial<LocalMapIndexEntry>;
+	return (
+		typeof entry.fileName === "string"
+		&& isSafeLocalMapFileName(entry.fileName)
+		&& (entry.format === "fpmap" || entry.format === "mmmap")
+		&& typeof entry.size === "number"
+		&& Number.isFinite(entry.size)
+		&& typeof entry.mtimeMs === "number"
+		&& Number.isFinite(entry.mtimeMs)
+		&& isSha256(entry.sha256)
+		&& typeof entry.addedAt === "string"
+		&& (entry.source === "imported" || entry.source === "scanned" || entry.source === "p2p-cache" || entry.source === "server-cache")
+	);
+}
+
+async function getLocalMapDirectoryStatus(): Promise<LocalMapDirectoryStatus> {
+	const directory = getLocalMapDirectory();
+	try {
+		await fs.mkdir(directory, { recursive: true });
+	} catch {
+		return { path: directory, readable: false, writable: false };
+	}
+	const readable = await fs.access(directory, fsSync.constants.R_OK).then(() => true).catch(() => false);
+	const writable = await fs.access(directory, fsSync.constants.W_OK).then(() => true).catch(() => false);
+	return { path: directory, readable, writable };
+}
+
+async function hashLocalMapFile(filePath: string): Promise<string> {
+	const hash = createHash("sha256");
+	await new Promise<void>((resolve, reject) => {
+		const stream = fsSync.createReadStream(filePath);
+		stream.on("data", (chunk: Buffer) => {
+			const bytes = new Uint8Array(chunk.buffer as ArrayBuffer, chunk.byteOffset, chunk.byteLength);
+			hash.update(bytes);
+		});
+		stream.on("error", reject);
+		stream.on("end", resolve);
+	});
+	return `sha256:${hash.digest("hex")}`;
+}
+
+async function readLocalMapIndex(): Promise<LocalMapIndex> {
+	try {
+		const raw = JSON.parse(await fs.readFile(getLocalMapIndexPath(), "utf-8")) as Partial<LocalMapIndex>;
+		if (raw.version !== 1 || !Array.isArray(raw.entries)) throw new Error("invalid local map index");
+		return {
+			version: 1,
+			updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : new Date().toISOString(),
+			entries: raw.entries.filter(isLocalMapIndexEntry),
+		};
+	} catch {
+		return { version: 1, updatedAt: new Date().toISOString(), entries: [] };
+	}
+}
+
+async function writeLocalMapIndex(index: LocalMapIndex): Promise<void> {
+	const directoryStatus = await getLocalMapDirectoryStatus();
+	if (!directoryStatus.writable) throw new Error("本地地图仓库目录不可写");
+	const indexPath = getLocalMapIndexPath();
+	const tempPath = `${indexPath}.tmp`;
+	index.updatedAt = new Date().toISOString();
+	await fs.writeFile(tempPath, JSON.stringify(index, null, 2), "utf-8");
+	await fs.rename(tempPath, indexPath);
+}
+
+async function scanLocalMapsInternal(): Promise<{ files: number; indexed: number; updated: number; removed: number }> {
+	const status = await getLocalMapDirectoryStatus();
+	if (!status.readable) throw new Error("本地地图仓库目录不可读");
+
+	const directory = getLocalMapDirectory();
+	const index = await readLocalMapIndex();
+	const previousByName = new Map(index.entries.map((entry) => [entry.fileName, entry]));
+	const nextEntries: LocalMapIndexEntry[] = [];
+	let files = 0;
+	let indexed = 0;
+	let updated = 0;
+
+	for (const dirent of await fs.readdir(directory, { withFileTypes: true })) {
+		if (!dirent.isFile() || dirent.isSymbolicLink() || !isSafeLocalMapFileName(dirent.name)) continue;
+		const format = getLocalMapFormat(dirent.name)!;
+		const filePath = path.join(directory, dirent.name);
+		const stat = await fs.stat(filePath);
+		if (stat.size <= 0 || stat.size > LOCAL_MAP_MAX_FILE_SIZE) continue;
+		files++;
+		const previous = previousByName.get(dirent.name);
+		if (previous && previous.size === stat.size && previous.mtimeMs === stat.mtimeMs) {
+			nextEntries.push(previous);
+			continue;
+		}
+		const source: LocalMapSource = previous?.source ?? "scanned";
+		nextEntries.push({
+			fileName: dirent.name,
+			format,
+			size: stat.size,
+			mtimeMs: stat.mtimeMs,
+			sha256: await hashLocalMapFile(filePath),
+			addedAt: previous?.addedAt ?? new Date().toISOString(),
+			source,
+			lastAccessedAt: previous?.lastAccessedAt,
+		});
+		if (previous) updated++;
+		else indexed++;
+	}
+
+	const removed = index.entries.filter((entry) => !nextEntries.some((next) => next.fileName === entry.fileName)).length;
+	const changed = indexed > 0 || updated > 0 || removed > 0 || nextEntries.length !== index.entries.length;
+	if (changed && status.writable) {
+		await writeLocalMapIndex({ version: 1, updatedAt: new Date().toISOString(), entries: nextEntries });
+	}
+	return { files, indexed, updated, removed };
+}
+
+async function enforceLocalMapCacheLimit(index: LocalMapIndex): Promise<void> {
+	const candidates = index.entries
+		.filter((entry) => entry.source === "p2p-cache" || entry.source === "server-cache")
+		.sort((a, b) => Date.parse(a.lastAccessedAt ?? a.addedAt) - Date.parse(b.lastAccessedAt ?? b.addedAt));
+	let cacheSize = candidates.reduce((total, entry) => total + entry.size, 0);
+	let changed = false;
+	while (cacheSize > LOCAL_MAP_CACHE_MAX_SIZE && candidates.length > 0) {
+		const entry = candidates.shift()!;
+		await fs.rm(path.join(getLocalMapDirectory(), entry.fileName), { force: true }).catch(() => {});
+		index.entries = index.entries.filter((item) => item.fileName !== entry.fileName);
+		cacheSize -= entry.size;
+		changed = true;
+	}
+	if (changed) await writeLocalMapIndex(index);
+}
+
+async function saveReceivedLocalMap(input: { sha256: string; format: LocalMapFormat; fileName?: string; data: ArrayBuffer }): Promise<void> {
+	if (!isSha256(input?.sha256) || (input?.format !== "fpmap" && input?.format !== "mmmap") || !(input?.data instanceof ArrayBuffer)) return;
+	if (input.data.byteLength <= 0 || input.data.byteLength > LOCAL_MAP_MAX_FILE_SIZE) return;
+	const status = await getLocalMapDirectoryStatus();
+	if (!status.writable) return;
+
+	const index = await readLocalMapIndex();
+	if (index.entries.some((entry) => entry.sha256 === input.sha256)) return;
+	const digest = input.sha256.slice("sha256:".length);
+	const requestedFileName = input.fileName;
+	const fallbackFileName = `p2p-${digest}.${input.format}`;
+	const baseFileName = requestedFileName && isSafeLocalMapFileName(requestedFileName) && getLocalMapFormat(requestedFileName) === input.format
+		? requestedFileName
+		: fallbackFileName;
+	const baseName = path.basename(baseFileName, path.extname(baseFileName));
+	let fileName = baseFileName;
+	let suffix = 1;
+	while (fsSync.existsSync(path.join(getLocalMapDirectory(), fileName))) {
+		fileName = `${baseName} (${suffix++}).${input.format}`;
+	}
+	const filePath = path.join(getLocalMapDirectory(), fileName);
+	const tempPath = `${filePath}.tmp`;
+	await fs.writeFile(tempPath, new Uint8Array(input.data));
+	const actualHash = await hashLocalMapFile(tempPath);
+	if (actualHash !== input.sha256) {
+		await fs.rm(tempPath, { force: true });
+		throw new Error("接收地图校验失败");
+	}
+	await fs.rename(tempPath, filePath);
+	const stat = await fs.stat(filePath);
+	index.entries.push({
+		fileName,
+		format: input.format,
+		size: stat.size,
+		mtimeMs: stat.mtimeMs,
+		sha256: input.sha256,
+		addedAt: new Date().toISOString(),
+		source: "p2p-cache",
+		lastAccessedAt: new Date().toISOString(),
+	});
+	await writeLocalMapIndex(index);
+	await enforceLocalMapCacheLimit(index);
+}
+
+ipcMain.handle("local-map:status", () => getLocalMapDirectoryStatus());
+ipcMain.handle("local-map:scan", async () => {
+	try {
+		return await scanLocalMapsInternal();
+	} catch (error) {
+		return { files: 0, indexed: 0, updated: 0, removed: 0, message: error instanceof Error ? error.message : "扫描失败" };
+	}
+});
+ipcMain.handle("local-map:open-folder", async () => {
+	const status = await getLocalMapDirectoryStatus();
+	if (!status.readable) throw new Error("本地地图仓库目录不可访问");
+	await shell.openPath(status.path);
+});
+ipcMain.handle("local-map:find-by-hash", async (_event, input: { sha256: string; size: number }) => {
+	if (!isSha256(input?.sha256) || !Number.isSafeInteger(input?.size) || input.size <= 0) return { found: false };
+	try {
+		await scanLocalMapsInternal();
+		const index = await readLocalMapIndex();
+		const entry = index.entries.find((candidate) => candidate.size === input.size && candidate.sha256 === input.sha256);
+		if (!entry || !isSafeLocalMapFileName(entry.fileName)) return { found: false };
+		const filePath = path.join(getLocalMapDirectory(), entry.fileName);
+		const data = await fs.readFile(filePath);
+		const verifiedSha256 = await hashLocalMapFile(filePath);
+		if (verifiedSha256 !== input.sha256) return { found: false };
+		entry.lastAccessedAt = new Date().toISOString();
+		const status = await getLocalMapDirectoryStatus();
+		if (status.writable) await writeLocalMapIndex(index);
+		return {
+			found: true,
+			fileName: entry.fileName,
+			verifiedSha256,
+			data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+		};
+	} catch {
+		return { found: false };
+	}
+});
+ipcMain.handle("local-map:save-received", async (_event, input) => saveReceivedLocalMap(input));
+ipcMain.handle("local-map:import", async () => {
+	try {
+		const status = await getLocalMapDirectoryStatus();
+		if (!status.writable) return { status: "failed", message: "本地地图仓库目录不可写" };
+		const result = await dialog.showOpenDialog({
+			properties: ["openFile"],
+			filters: [{ name: "MineMonopoly 地图", extensions: ["fpmap", "mmmap"] }],
+		});
+		if (result.canceled || result.filePaths.length === 0) return { status: "failed", message: "已取消导入" };
+		const sourcePath = result.filePaths[0];
+		const sourceName = path.basename(sourcePath);
+		const format = getLocalMapFormat(sourceName);
+		const sourceStat = await fs.stat(sourcePath);
+		if (!format || !sourceStat.isFile() || sourceStat.size <= 0 || sourceStat.size > LOCAL_MAP_MAX_FILE_SIZE) {
+			return { status: "failed", message: "仅支持大小合法的 .fpmap 或 .mmmap 文件" };
+		}
+		await scanLocalMapsInternal();
+		const sha256 = await hashLocalMapFile(sourcePath);
+		const index = await readLocalMapIndex();
+		const duplicate = index.entries.find((entry) => entry.sha256 === sha256);
+		if (duplicate) return { status: "duplicate", fileName: duplicate.fileName, sha256, size: duplicate.size, message: "该地图文件已存在" };
+
+		const directory = getLocalMapDirectory();
+		const baseName = path.basename(sourceName, path.extname(sourceName));
+		let targetName = sourceName;
+		let suffix = 1;
+		while (fsSync.existsSync(path.join(directory, targetName))) {
+			targetName = `${baseName} (${suffix++}).${format}`;
+		}
+		const targetPath = path.join(directory, targetName);
+		const tempPath = `${targetPath}.tmp`;
+		await fs.copyFile(sourcePath, tempPath);
+		if ((await hashLocalMapFile(tempPath)) !== sha256) {
+			await fs.rm(tempPath, { force: true });
+			return { status: "failed", message: "导入文件校验失败" };
+		}
+		await fs.rename(tempPath, targetPath);
+		const targetStat = await fs.stat(targetPath);
+		index.entries.push({
+			fileName: targetName,
+			format,
+			size: targetStat.size,
+			mtimeMs: targetStat.mtimeMs,
+			sha256,
+			addedAt: new Date().toISOString(),
+			source: "imported",
+		});
+		await writeLocalMapIndex(index);
+		return { status: "imported", fileName: targetName, sha256, size: targetStat.size };
+	} catch (error) {
+		return { status: "failed", message: error instanceof Error ? error.message : "导入失败" };
+	}
 });
 
 // ============================================================

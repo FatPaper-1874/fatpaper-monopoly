@@ -44,6 +44,14 @@ export function createElectronPlatform(): PlatformAPI {
 		clearMapCache: () => api?.clearMapCache?.(),
 		openMapCacheFolder: () => api?.openMapCacheFolder?.(),
 
+		// 本地地图仓库
+		importLocalMap: () => api?.importLocalMap?.(),
+		scanLocalMaps: () => api?.scanLocalMaps?.(),
+		findLocalMapByHash: (input) => api?.findLocalMapByHash?.(input),
+		saveReceivedLocalMap: (input) => api?.saveReceivedLocalMap?.(input),
+		openLocalMapDirectory: () => api?.openLocalMapDirectory?.(),
+		getLocalMapDirectoryStatus: () => api?.getLocalMapDirectoryStatus?.(),
+
 		// 开发者
 		openInspector: api?.openInspector?.bind(api),
 		openAIConsole: api?.openAIConsole?.bind(api),

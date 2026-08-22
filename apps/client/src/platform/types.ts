@@ -45,6 +45,35 @@ export interface LogNetworkData {
  *
  * 窗口控制类方法（minimize / maximize / close 等）仅桌面平台有，标记为可选。
  */
+export interface ImportLocalMapResult {
+	status: "imported" | "duplicate" | "failed";
+	fileName?: string;
+	sha256?: string;
+	size?: number;
+	message?: string;
+}
+
+export interface LocalMapScanResult {
+	files: number;
+	indexed: number;
+	updated: number;
+	removed: number;
+	message?: string;
+}
+
+export interface LocalMapDirectoryStatus {
+	path: string;
+	readable: boolean;
+	writable: boolean;
+}
+
+export interface LocalMapLookupResult {
+	found: boolean;
+	fileName?: string;
+	data?: ArrayBuffer;
+	verifiedSha256?: string;
+}
+
 export interface PlatformAPI {
 	// ---- 窗口控制（桌面平台） ----
 	minimize?: () => void;
@@ -79,6 +108,21 @@ export interface PlatformAPI {
 	clearMapCache?: () => Promise<{ size: number; count: number }>;
 	/** 打开缓存文件夹 */
 	openMapCacheFolder?: () => Promise<string>;
+
+	// ---- 本地地图仓库（仅 Electron 平台实现） ----
+	importLocalMap?: () => Promise<ImportLocalMapResult>;
+	scanLocalMaps?: () => Promise<LocalMapScanResult>;
+	findLocalMapByHash?: (input: { sha256: string; size: number }) => Promise<LocalMapLookupResult>;
+	/** 仅接受已在渲染进程完成加载验证的 P2P 地图，写入固定仓库缓存。 */
+	saveReceivedLocalMap?: (input: {
+		sha256: string;
+		format: "fpmap" | "mmmap";
+		/** 房主原始文件名；主进程会校验安全性并在冲突时自动加序号。 */
+		fileName?: string;
+		data: ArrayBuffer;
+	}) => Promise<void>;
+	openLocalMapDirectory?: () => Promise<void>;
+	getLocalMapDirectoryStatus?: () => Promise<LocalMapDirectoryStatus>;
 
 	// ---- 开发者 ----
 	openInspector?: () => Promise<void>;

@@ -59,6 +59,12 @@ export const enum SocketMsgType {
 	MapChunkEnd = "MapChunkEnd",    // 分块传输完成
 	MapChunkAbort = "MapChunkAbort", // 中止分块传输
 	MapChunkAck = "MapChunkAck",     // 分块接收确认
+	/** 自定义地图元描述（先本地命中，再按需传输） */
+	CustomMapDescriptor = "CustomMapDescriptor",
+	/** 客机本地地图匹配结果 */
+	MapLocalCheck = "MapLocalCheck",
+	/** 客机按需请求自定义地图 P2P 传输 */
+	MapTransferRequest = "MapTransferRequest",
 	/** 地图事件动态变更（添加/移除/关联） */
 	MapEventChanged = "MapEventChanged",
 }
