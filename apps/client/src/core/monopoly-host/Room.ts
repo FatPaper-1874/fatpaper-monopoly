@@ -918,6 +918,8 @@ export class Room {
 
 		function sendChangeMapMessage() {
 			_this.userList.forEach((u) => (u.isReady = false));
+			// 房间快照不能继续携带上一张地图的参数；新地图加载后由房主同步其默认值。
+			_this.gameSetting = {};
 			// 使用分块传输发送给所有玩家（含房主，避免单条大消息被不可靠信道丢弃）
 			for (const [userId, user] of _this.userList) {
 				_this.startMapChunkTransfer(userId, data);

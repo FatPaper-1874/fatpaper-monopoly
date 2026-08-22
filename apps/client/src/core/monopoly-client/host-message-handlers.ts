@@ -56,6 +56,8 @@ interface ChunkReceiveState {
 
 /** 当前接收状态 */
 let receiveState: ChunkReceiveState | null = null;
+/** 地图加载完成前，暂存新地图默认参数，避免旧 RoomInfo 覆盖它。 */
+let pendingMapDefaultGameSetting: GameSetting | null = null;
 
 /** 整体传输超时基础值（毫秒），实际按块数动态计算（与主机端一致） */
 const TRANSFER_TIMEOUT = 60000;
@@ -299,10 +301,33 @@ const handleKickOutReply: ServerMessageHandler<SocketMsgType.KickOut> = (msg, cl
 	});
 };
 
+function isSameGameSetting(left: GameSetting, right: GameSetting): boolean {
+	const leftKeys = Object.keys(left);
+	const rightKeys = Object.keys(right);
+	if (leftKeys.length !== rightKeys.length || leftKeys.some((key) => !Object.prototype.hasOwnProperty.call(right, key))) return false;
+	return leftKeys.every((key) => {
+		const leftItem = left[key];
+		const rightItem = right[key];
+		return leftItem.label === rightItem.label && Object.is(leftItem.value, rightItem.value) && leftItem.displayValue === rightItem.displayValue;
+	});
+}
+
 const handleRoomInfoReply: ServerMessageHandler<SocketMsgType.RoomInfo> = (msg) => {
 	const roomInfoData = msg.data;
+	if (!roomInfoData) return;
+
 	const roomInfoStore = useRoomInfo();
-	roomInfoData && roomInfoStore.$patch(roomInfoData);
+	const pendingDefault = pendingMapDefaultGameSetting;
+	if (pendingDefault && !isSameGameSetting(roomInfoData.gameSetting, pendingDefault)) {
+		// 换图消息和 RoomInfo 是并发到达的。自定义地图命中本地缓存时，旧 RoomInfo
+		// 可能在新地图加载完成后才被处理，不能让其中的旧参数覆盖新地图默认值。
+		const { gameSetting: _staleGameSetting, ...roomInfoWithoutGameSetting } = roomInfoData;
+		roomInfoStore.$patch(roomInfoWithoutGameSetting);
+		return;
+	}
+
+	if (pendingDefault) pendingMapDefaultGameSetting = null;
+	roomInfoStore.$patch(roomInfoData);
 };
 
 const handleChangeMap: ServerMessageHandler<SocketMsgType.ChangeMap> = async (msg, client) => {
@@ -357,24 +382,31 @@ const handleChangeMapInternal: ServerMessageHandler<SocketMsgType.ChangeMap> = a
 			}
 			tempRoleList.push({ ...role, imageUrl: imageResource.url });
 		}
-		useRoomInfo().roleList = tempRoleList;
-		useRoomInfo().gameSettingForm = gameMap.gameSettingForm;
+		const roomInfoStore = useRoomInfo();
+		roomInfoStore.roleList = tempRoleList;
+		roomInfoStore.gameSettingForm = gameMap.gameSettingForm;
+
+		// 切换地图时，所有客户端立即以新地图的默认参数覆盖旧地图设置。
+		// 不能只等待房主的同步消息，否则参数表单可能短暂或持续显示上一张地图的值。
+		const defaultGameSetting: GameSetting = {};
+		gameMap.gameSettingForm.forEach((formSchema) => {
+			defaultGameSetting[formSchema.key] = {
+				label: formSchema.label,
+				value: formSchema.defaultValue,
+				displayValue: getDisplayValueByFormSchema(formSchema, formSchema.defaultValue),
+			};
+		});
+		pendingMapDefaultGameSetting = defaultGameSetting;
+		roomInfoStore.gameSetting = defaultGameSetting;
+
 		// 初始随机选择一个角色
 		if (roles.length > 0 && !useRoomInfo().amISpectator) {
 			useMonopolyClient().changeRole(roles[Math.floor(Math.random() * roles.length)].id);
 		}
 		// 如果自己是房主,提交默认游戏设置(房间类里不解析游戏数据, 只能靠房主来传)
-		if (useRoomInfo().amIRoomOwner) {
+		if (roomInfoStore.amIRoomOwner) {
 			client.randomizeAIRoles();
-			const setting: GameSetting = {};
-			gameMap.gameSettingForm.forEach((formSchema) => {
-				setting[formSchema.key] = {
-					label: formSchema.label,
-					value: formSchema.defaultValue,
-					displayValue: getDisplayValueByFormSchema(formSchema, formSchema.defaultValue),
-				};
-			});
-			client.changeGameSetting(setting);
+			client.changeGameSetting(defaultGameSetting);
 		}
 		FPMessage({ type: "info", message: `地图加载成功: ${mapInfo.name} v${mapInfo.version}` });
 		useRoomInfo().mapInfo = mapInfo;

@@ -426,7 +426,7 @@ import { vStagger } from "@src/directives";
 		<FpDialog v-model:visible="gameSettingFormVisible" :hidden-footer="true">
 			<template #title>修改地图参数</template>
 			<template #default>
-				<custom-form
+				<custom-form :key="roomInfoStore.mapId"
 					:initial-data="gameSettingForForm"
 					@submit="handleGameSettingChange"
 					:schema="gameSettingForm"
