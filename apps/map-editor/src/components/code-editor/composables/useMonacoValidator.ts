@@ -111,8 +111,12 @@ export function useMonacoValidator() {
 			return { valid: false, errors: [{ line: 0, column: 0, message: "No type libraries available" }] };
 		}
 
-		// 保存当前 extraLibs，校验完成后恢复，避免影响 UI 编辑器
-		const prevLibs = tsDefaults.getExtraLibs();
+		// 保存当前 extraLibs，校验完成后恢复，避免影响 UI 编辑器。
+		// getExtraLibs 返回的是以文件路径为键的对象，setExtraLibs 则只接受数组。
+		const prevLibs = Object.entries(tsDefaults.getExtraLibs()).map(([filePath, lib]) => ({
+			content: lib.content,
+			filePath,
+		}));
 		// 强制清除 Monaco 缓存，确保使用最新类型
 		tsDefaults.setExtraLibs([]);
 		await new Promise(resolve => setTimeout(resolve, 0)); // 给 Monaco 处理时间
@@ -153,7 +157,7 @@ export function useMonacoValidator() {
 		} finally {
 			model.dispose();
 			// 恢复 extraLibs，避免影响 UI 编辑器的类型提示
-			tsDefaults.setExtraLibs(prevLibs as any);
+			tsDefaults.setExtraLibs(prevLibs);
 		}
 	}
 
