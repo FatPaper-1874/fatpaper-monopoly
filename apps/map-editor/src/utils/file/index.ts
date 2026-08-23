@@ -145,7 +145,10 @@ export async function buildFpmapBuffer(mapId: string, mapData: GameMap): Promise
 		};
 		imagesList.push(tempImage);
 	}
-	const dataStr = JSON.stringify(mapData);
+	const dataStr = JSON.stringify({
+		...mapData,
+		pathMapItemTypeIds: mapData.pathMapItemTypeIds ?? [],
+	});
 	return dataToProtoBuffer(mapId, dataStr, modelsList, imagesList, mapData.serverMapId);
 }
 
@@ -265,6 +268,7 @@ export function createDefaultMapData(): GameMap {
 		chanceCards: [],
 		mapItemTypes: [],
 		mapPaths: [],
+		pathMapItemTypeIds: [],
 		mapIndex: [],
 		roles: [],
 		inUse: false,

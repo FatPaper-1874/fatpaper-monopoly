@@ -155,7 +155,7 @@ export async function serializeToDir(mapData: GameMap, dirPath: string): Promise
 		info: mapData.info,
 		serverMapId: mapData.serverMapId || "",
 		startMapItemId: mapData.startMapItemId,
-		pathMapItemTypeIds: mapData.pathMapItemTypeIds,
+		pathMapItemTypeIds: mapData.pathMapItemTypeIds ?? [],
 	};
 	await atomicWriteJson(`${dirPath}/map.json`, mapJson);
 

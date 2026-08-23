@@ -50,6 +50,15 @@ export type MCPToolName =
 	| "query_map_items"
 	| "plan_map_changes"
 	| "apply_map_changes"
+	// Map path tools
+	| "get_map_path_graph"
+	| "list_map_paths"
+	| "get_map_path"
+	| "add_map_path"
+	| "update_map_path"
+	| "remove_map_path"
+	| "replace_map_paths"
+	| "update_map_path_settings"
 	// Property tools
 	| "add_property"
 	| "update_property"

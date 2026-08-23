@@ -7,6 +7,7 @@ import { getCodeTemplateTools } from "./get-code-template.js";
 import { getDefaultCodeTools } from "./get-default-code.js";
 import { mapEventTools } from "./map-events.js";
 import { mapItemTools } from "./map-items.js";
+import { mapPathTools } from "./map-paths.js";
 import { mapChangeTools } from "./map-changes.js";
 import { modifierTemplateTools } from "./modifier-templates.js";
 import { propertyTools } from "./properties.js";
@@ -28,6 +29,7 @@ export type MCPToolCategory =
 	| "type-lib"
 	| "resource"
 	| "map-item"
+	| "map-path"
 	| "map-change"
 	| "property"
 	| "game-setting"
@@ -61,6 +63,7 @@ export const allTools: MCPToolDefinition[] = [
 	...withCategory("type-lib", typeLibsTools),
 	...withCategory("resource", resourceTools),
 	...withCategory("map-item", mapItemTools),
+	...withCategory("map-path", mapPathTools),
 	...withCategory("map-change", mapChangeTools),
 	...withCategory("property", propertyTools),
 	...withCategory("system", systemTools),

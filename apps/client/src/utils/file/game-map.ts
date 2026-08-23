@@ -57,6 +57,8 @@ export function validateGameMapForRuntime(map: GameMap): string[] {
 		errors.push("pathMapItemTypeIds 必须是数组");
 		return errors;
 	}
+	// 空数组表示编辑器尚未显式选择路径节点类型，继续按旧地图规则推断。
+	if (map.pathMapItemTypeIds.length === 0) return errors;
 
 	const declaredTypeIds = new Set(map.pathMapItemTypeIds);
 	const knownTypeIds = new Set((Array.isArray(map.mapItemTypes) ? map.mapItemTypes : []).map((type) => type.id));

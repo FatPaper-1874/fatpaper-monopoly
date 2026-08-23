@@ -18,7 +18,7 @@ export async function validateMapTool(args: unknown) {
 export const validateMapTools = [
 	{
 		name: "validate_map",
-		description: "校验地图索引、重复坐标与无效关联。参数：checkLevel（basic 或 strict，默认 basic）。",
+		description: "校验重复坐标、无效关联和 MapPath V2 路径图；使用 MapPath V2 时不再要求旧版 mapIndex 非空。参数：checkLevel（basic 或 strict，默认 basic）。",
 		inputSchema: ValidateMapSchema,
 		handler: validateMapTool,
 	},
