@@ -2564,6 +2564,13 @@ export class GameProcess implements IGameProcess {
 		return this.mapData.mapPaths?.find((path) => path.id === pathId);
 	}
 
+	public getPathMapItemIds(): string[] {
+		const pathMapItemTypeIds = new Set(this.mapData.pathMapItemTypeIds ?? []);
+		return this.mapData.mapItems
+			.filter((mapItem) => pathMapItemTypeIds.has(mapItem.type.id))
+			.map((mapItem) => mapItem.id);
+	}
+
 	private getMapMoveOptions(mapItemId: string, direction: MapMoveDirection = "forward"): MapMoveOption[] {
 		const options: MapMoveOption[] = [];
 		const targetMapItemIds = new Set<string>();

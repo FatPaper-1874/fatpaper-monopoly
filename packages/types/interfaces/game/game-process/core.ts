@@ -64,6 +64,9 @@ export interface IGameProcess extends IGameProcessCustomFields {
 	/** 根据 ID 获取地图路径。 */
 	getMapPathById?(pathId: string): MapPath | undefined;
 
+	/** 获取所有可行走地图项的 ID（其类型位于 pathMapItemTypeIds 中）。 */
+	getPathMapItemIds?(): string[];
+
 	/**
 	 * 获取指定地图项在给定实际移动方向下的可走路径。
 	 * 返回顺序必须与 mapData.mapPaths 保持一致。
