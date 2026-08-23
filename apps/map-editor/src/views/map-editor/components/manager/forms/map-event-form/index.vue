@@ -3,14 +3,14 @@ import { MapEvent } from "@mine-monopoly/types/interfaces/game/item";
 import CodeEditor from "@src/components/code-editor/index.vue";
 import libContent from "@src/components/code-editor/editor-lib.d.ts?raw";
 import { MAP_EVENT_TEMPLATE as templateText } from "@src/components/code-editor/code-templates";
-import { reactive, watch } from "vue";
+import { h, reactive, ref, watch } from "vue";
 import { useMapDataStore, useResourceStore } from "@src/stores";
-import { message } from "ant-design-vue";
+import { message, Modal } from "ant-design-vue";
 import { MapEventType } from "@mine-monopoly/types";
 import { ResourcePicker } from "@src/components/resource-picker";
 import { addNewImage } from "@src/utils/file";
 import { cloneDeep } from "lodash";
-import { mapContentService } from "@src/services";
+import { CodeValidationError, mapContentService } from "@src/services";
 import { generateShortId } from "@src/utils/short-id";
 
 // 事件类型选项
@@ -25,6 +25,7 @@ const emits = defineEmits(["close"]);
 const resourceStore = useResourceStore();
 
 const mapEventForm = reactive<MapEvent & { tempFilePath?: string }>(getInitForm());
+const submitting = ref(false);
 
 // 初始化表单
 watch(
@@ -61,7 +62,21 @@ function handleResourceChange(resource: any) {
 	}
 }
 
-async function handleAddMapEvent() {
+function showCodeValidationModal(error: CodeValidationError) {
+	Modal.confirm({
+		title: "代码校验失败",
+		content: h("pre", { style: "max-height: 360px; overflow: auto; white-space: pre-wrap; margin: 0;" }, error.message),
+		okText: "忽略错误并提交",
+		cancelText: "返回修改",
+		okType: "danger",
+		onOk: () => handleAddMapEvent(true),
+	});
+}
+
+async function handleAddMapEvent(skipCodeValidation: boolean = false) {
+	if (submitting.value) return;
+	submitting.value = true;
+
 	try {
 		if (props.mapEvent) {
 			// 编辑模式
@@ -70,7 +85,7 @@ async function handleAddMapEvent() {
 				const newIconId = await addNewImage(mapEventForm.tempFilePath, mapEventForm.name);
 				mapEventForm.iconId = newIconId;
 			}
-			await mapContentService.updateMapEvent(mapEventForm);
+			await mapContentService.updateMapEvent(mapEventForm, { skipCodeValidation: skipCodeValidation === true });
 		} else {
 			// 新增模式
 			if (mapEventForm.tempFilePath) {
@@ -79,11 +94,17 @@ async function handleAddMapEvent() {
 				mapEventForm.iconId = newIconId;
 			}
 			// ResourcePicker 已经添加了图片（autoSave: true 模式）
-			await mapContentService.addMapEvent(mapEventForm);
+			await mapContentService.addMapEvent(mapEventForm, { skipCodeValidation: skipCodeValidation === true });
 		}
 		emits("close");
-	} catch (e: any) {
-		message.error(e.message, 1);
+	} catch (e: unknown) {
+		if (e instanceof CodeValidationError) {
+			showCodeValidationModal(e);
+			return;
+		}
+		message.error(e instanceof Error ? e.message : "提交失败", 1);
+	} finally {
+		submitting.value = false;
 	}
 }
 </script>
@@ -93,7 +114,7 @@ async function handleAddMapEvent() {
 		<div class="map-event-form">
 			<div class="form-content">
 				<a-form
-					@finish="handleAddMapEvent"
+					@finish="() => handleAddMapEvent()"
 					:model="mapEventForm"
 					name="map-event"
 					autocomplete="off"
@@ -121,7 +142,7 @@ async function handleAddMapEvent() {
 				</a-form>
 			</div>
 			<div class="footer-actions">
-				<a-button type="primary" block @click="handleAddMapEvent">
+				<a-button type="primary" block :loading="submitting" @click="() => handleAddMapEvent()">
 					{{ mapEvent ? '保存修改' : '创建事件' }}
 				</a-button>
 			</div>

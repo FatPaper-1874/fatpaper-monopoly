@@ -2,15 +2,15 @@
 import CodeEditor from "@src/components/code-editor/index.vue";
 import libContent from "@src/components/code-editor/editor-lib.d.ts?raw";
 import { generateChanceCardTemplate, generateChanceCardParams, replaceEffectCodeParams } from "@src/components/code-editor/code-templates";
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, h, onMounted, reactive, ref, watch } from "vue";
 import { useMapDataStore, useResourceStore } from "@src/stores";
-import { message } from "ant-design-vue";
+import { message, Modal } from "ant-design-vue";
 import { ChanceCardInfo, TargetSelectType } from "@mine-monopoly/types";
 import { Rule } from "ant-design-vue/es/form";
 import { ChanceCard } from "@mine-monopoly/ui";
 import { ResourcePicker } from "@src/components/resource-picker";
 import { addNewImage, convertToFpUrl } from "@src/utils/file";
-import { mapContentService } from "@src/services";
+import { CodeValidationError, mapContentService } from "@src/services";
 import { generateShortId } from "@src/utils/short-id";
 
 const props = defineProps<{ chanceCard: ChanceCardInfo | undefined }>();
@@ -47,6 +47,7 @@ const chanceCardForm = reactive<ChanceCardInfo & { tempFilePath?: string }>(
 	props.chanceCard ? JSON.parse(JSON.stringify(props.chanceCard)) : getInitForm(),
 );
 const chanceCardIdSuffix = ref(props.chanceCard ? chanceCardForm.id.replace(/^card-/, '') : '');
+const submitting = ref(false);
 
 const templateText = computed(() => generateChanceCardTemplate(chanceCardForm.type));
 
@@ -80,7 +81,21 @@ function handleResourceChange(resource: any) {
 	}
 }
 
-async function handleAddChanceCard() {
+function showCodeValidationModal(error: CodeValidationError) {
+	Modal.confirm({
+		title: "代码校验失败",
+		content: h("pre", { style: "max-height: 360px; overflow: auto; white-space: pre-wrap; margin: 0;" }, error.message),
+		okText: "忽略错误并提交",
+		cancelText: "返回修改",
+		okType: "danger",
+		onOk: () => handleAddChanceCard(true),
+	});
+}
+
+async function handleAddChanceCard(skipCodeValidation: boolean = false) {
+	if (submitting.value) return;
+	submitting.value = true;
+
 	try {
 		if (props.chanceCard) {
 			// 编辑模式：如果用户更换了图标，先保存新图片
@@ -88,18 +103,24 @@ async function handleAddChanceCard() {
 				const newIconId = await addNewImage(chanceCardForm.tempFilePath, chanceCardForm.name);
 				chanceCardForm.iconId = newIconId;
 			}
-			await mapContentService.updateChanceCard(chanceCardForm);
+			await mapContentService.updateChanceCard(chanceCardForm, { skipCodeValidation: skipCodeValidation === true });
 		} else {
 			// 新增模式
 			if (chanceCardForm.tempFilePath) {
 				const newIconId = await addNewImage(chanceCardForm.tempFilePath, chanceCardForm.name);
 				chanceCardForm.iconId = newIconId;
 			}
-			await mapContentService.addChanceCard(chanceCardForm);
+			await mapContentService.addChanceCard(chanceCardForm, { skipCodeValidation: skipCodeValidation === true });
 		}
 		emits("close");
-	} catch (e: any) {
-		message.error(e.message, 1);
+	} catch (e: unknown) {
+		if (e instanceof CodeValidationError) {
+			showCodeValidationModal(e);
+			return;
+		}
+		message.error(e instanceof Error ? e.message : "提交失败", 1);
+	} finally {
+		submitting.value = false;
 	}
 }
 
@@ -135,7 +156,7 @@ const iconRule = async (_rule: Rule, value: string) => {
 					:disable="false"
 					:icon-url="chanceCardIconPreview"
 				/>
-				<a-form @finish="handleAddChanceCard" :model="chanceCardForm" name="map-event" autocomplete="off">
+				<a-form @finish="() => handleAddChanceCard()" :model="chanceCardForm" name="map-event" autocomplete="off">
 					<a-form-item label="ID">
 						<div style="display: flex; gap: 4px">
 							<a-input
@@ -176,7 +197,7 @@ const iconRule = async (_rule: Rule, value: string) => {
 				</a-form>
 			</div>
 			<div class="footer-actions">
-				<a-button type="primary" block @click="handleAddChanceCard">
+				<a-button type="primary" block :loading="submitting" @click="() => handleAddChanceCard()">
 					{{ chanceCard ? '保存修改' : '创建机会卡' }}
 				</a-button>
 			</div>
