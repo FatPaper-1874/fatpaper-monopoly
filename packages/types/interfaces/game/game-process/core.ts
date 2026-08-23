@@ -59,28 +59,28 @@ export interface IGameProcess extends IGameProcessCustomFields {
 	mapData: GameMap;
 
 	/** 根据 ID 获取地图项。 */
-	getMapItemById?(mapItemId: string): MapItem | undefined;
+	getMapItemById(mapItemId: string): MapItem | undefined;
 
 	/** 根据 ID 获取地图路径。 */
-	getMapPathById?(pathId: string): MapPath | undefined;
+	getMapPathById(pathId: string): MapPath | undefined;
 
 	/** 获取所有可行走地图项的 ID（其类型位于 pathMapItemTypeIds 中）。 */
-	getPathMapItemIds?(): string[];
+	getPathMapItemIds(): string[];
 
 	/**
 	 * 获取指定地图项在给定实际移动方向下的可走路径。
 	 * 返回顺序必须与 mapData.mapPaths 保持一致。
 	 */
-	getAvailableMapPaths?(mapItemId: string, direction: MapMoveDirection): MapPath[];
+	getAvailableMapPaths(mapItemId: string, direction: MapMoveDirection): MapPath[];
 
 	/** 查询路径是否在当前会话中启用。 */
-	isMapPathEnabled?(pathId: string): boolean;
+	isMapPathEnabled(pathId: string): boolean;
 
 	/**
 	 * 设置路径在当前会话中的启用状态，不修改静态地图数据。
 	 * 启用时可注册通行条件；未提供条件时清除旧条件。关闭时始终清除条件。
 	 */
-	setMapPathEnabled?(pathId: string, enabled: boolean, canPass?: MapPathCanPass): void;
+	setMapPathEnabled(pathId: string, enabled: boolean, canPass?: MapPathCanPass): void;
 
 	/** 游戏设置 */
 	gameSetting: GameSetting;

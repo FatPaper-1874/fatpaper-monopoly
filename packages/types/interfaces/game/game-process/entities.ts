@@ -32,7 +32,7 @@ export interface IPlayer {
 	chanceCards: IChanceCard[];
 
 	/** MapPath V2 的当前位置地图项 ID；旧玩家实例可暂时不提供。 */
-	positionMapItemId?: string;
+	positionMapItemId: string;
 
 	/**
 	 * 旧版线性位置索引。
@@ -158,7 +158,7 @@ export interface IPlayer {
 	setPositionIndex: (newIndex: number) => void;
 
 	/** 设置当前位置地图项 ID（MapPath V2）。 */
-	setPositionMapItemId?: (mapItemId: string) => void;
+	setPositionMapItemId: (mapItemId: string) => void;
 
 	/**
 	 * 设置破产状态
@@ -180,7 +180,7 @@ export interface IPlayer {
 	tp: (positionIndex: number) => Promise<void>;
 
 	/** 按地图项 ID 传送（MapPath V2）。 */
-	tpToMapItem?: (mapItemId: string) => Promise<void>;
+	tpToMapItem: (mapItemId: string) => Promise<void>;
 
 	/**
 	 * 掷骰子

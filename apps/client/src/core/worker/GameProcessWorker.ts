@@ -657,8 +657,8 @@ export class GameProcess implements IGameProcess {
 		this.mapData = normalizeGameMap(mapData);
 		// 向后兼容：确保所有阶段类型都已初始化（旧地图可能缺少新增的阶段类型）
 		normalizePhases(this.mapData.phases);
-		this.mapPathAdjacency = buildMapPathAdjacency(this.mapData.mapPaths ?? []);
-		this.enabledPathIds = new Set(getInitialEnabledMapPathIds(this.mapData.mapPaths ?? []));
+		this.mapPathAdjacency = buildMapPathAdjacency(this.mapData.mapPaths);
+		this.enabledPathIds = new Set(getInitialEnabledMapPathIds(this.mapData.mapPaths));
 		this.gameSetting = gameSetting;
 		this.userList = userList;
 		// 暴露 gameProcess 给自定义代码，但不可被覆盖
@@ -2561,7 +2561,7 @@ export class GameProcess implements IGameProcess {
 	}
 
 	public getMapPathById(pathId: string): MapPath | undefined {
-		return this.mapData.mapPaths?.find((path) => path.id === pathId);
+		return this.mapData.mapPaths.find((path) => path.id === pathId);
 	}
 
 	public getPathMapItemIds(): string[] {
