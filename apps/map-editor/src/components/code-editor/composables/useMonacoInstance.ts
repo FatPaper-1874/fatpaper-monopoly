@@ -2,8 +2,40 @@ import * as monaco from "monaco-editor";
 import { ref } from "vue";
 import loader from "@monaco-editor/loader";
 
-// 模块级单例（跨组件共享）
+// 模块级单例（编辑器与保存校验共用同一个 Monaco / TS defaults）
 let monacoSingleton: typeof monaco | null = null;
+let monacoInitialization: Promise<typeof monaco> | null = null;
+
+export function getMonacoSingleton(): Promise<typeof monaco> {
+	if (monacoSingleton) return Promise.resolve(monacoSingleton);
+
+	if (!monacoInitialization) {
+		loader.config({ monaco });
+		monacoInitialization = loader
+			.init()
+			.then((instance) => {
+				instance.languages.typescript.typescriptDefaults.setCompilerOptions({
+					target: instance.languages.typescript.ScriptTarget.ES2020,
+					allowNonTsExtensions: true,
+					moduleResolution: instance.languages.typescript.ModuleResolutionKind.NodeJs,
+					module: instance.languages.typescript.ModuleKind.CommonJS,
+					noEmit: true,
+					esModuleInterop: true,
+					strict: true,
+					noImplicitAny: true,
+					strictNullChecks: true,
+				});
+				monacoSingleton = instance;
+				return instance;
+			})
+			.catch((error) => {
+				monacoInitialization = null;
+				throw error;
+			});
+	}
+
+	return monacoInitialization;
+}
 
 export function useMonacoInstance() {
 	const monacoInstance = ref<typeof monaco | null>(null);
@@ -17,31 +49,19 @@ export function useMonacoInstance() {
 		language: string;
 		containerId: string;
 	}): Promise<{ editor: monaco.editor.IStandaloneCodeEditor; model: monaco.editor.ITextModel }> {
-		// 首次初始化全局单例
-		if (!monacoSingleton) {
-			loader.config({ monaco });
-			monacoSingleton = await loader.init();
-			monacoSingleton.languages.typescript.typescriptDefaults.setCompilerOptions({
-				target: monacoSingleton.languages.typescript.ScriptTarget.ES2020,
-				allowNonTsExtensions: true,
-				moduleResolution: monacoSingleton.languages.typescript.ModuleResolutionKind.NodeJs,
-				module: monacoSingleton.languages.typescript.ModuleKind.CommonJS,
-				noEmit: true,
-				esModuleInterop: true,
-			});
-		}
-		monacoInstance.value = monacoSingleton;
+		const sharedMonaco = await getMonacoSingleton();
+		monacoInstance.value = sharedMonaco;
 
 		// 创建 Model（唯一 URI，避免多实例冲突）
-		const modelUri = monacoSingleton.Uri.parse(`file:///main-${options.containerId}.ts`);
-		model = monacoSingleton.editor.createModel(
+		const modelUri = sharedMonaco.Uri.parse(`file:///main-${options.containerId}.ts`);
+		model = sharedMonaco.editor.createModel(
 			options.value,
 			options.language,
 			modelUri,
 		);
 
 		// 创建编辑器
-		editor = monacoSingleton.editor.create(container, {
+		editor = sharedMonaco.editor.create(container, {
 			model,
 			minimap: { enabled: false },
 			wordWrap: "on",
