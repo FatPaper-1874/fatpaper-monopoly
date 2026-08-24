@@ -1,4 +1,4 @@
-import { GameMap } from "@mine-monopoly/types";
+import { GameMap, MapPath } from "@mine-monopoly/types";
 import { debounce, ThreeSceneBase, AnimationManager } from "@mine-monopoly/utils";
 import { CameraMode, OperationMode } from "@src/enums";
 import { useEditorStore, useMapDataStore, useResourceStore } from "@src/stores";
@@ -17,12 +17,17 @@ import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass";
 import { GammaCorrectionShader } from "three/examples/jsm/shaders/GammaCorrectionShader";
 import { message } from "ant-design-vue";
 import { BoxSelector, projectToScreen, isPointInRect } from "@src/utils/three/box-selector";
-import { generateShortId } from "@src/utils/short-id";
+import { generateMapItemId } from "@src/utils/map-item-id";
 
 interface MapItemTypeWithModel extends MapItemType {
 	model: THREE.Object3D;
 	gltf?: Awaited<ReturnType<typeof getModelById>>;
 	hasAnimations?: boolean;
+}
+
+interface RenderedMapPath {
+	visual: THREE.Group;
+	hit: THREE.Mesh;
 }
 
 export class MapRenderer {
@@ -54,6 +59,14 @@ export class MapRenderer {
 	private mapItemsInScene: Map<string, THREE.Object3D> = new Map();
 	private mapItemGroup: THREE.Group = new THREE.Group();
 	private mapIndexLineGroup: THREE.Group = new THREE.Group();
+	private mapPathGroup: THREE.Group = new THREE.Group();
+	private mapPathHitGroup: THREE.Group = new THREE.Group();
+	private mapPathsInScene: Map<string, RenderedMapPath> = new Map();
+	private activeMapPathId?: string;
+	private hoveredMapPathId?: string;
+	private pathDraftLine: THREE.Line;
+	private pathDraftStartPoint: THREE.Mesh;
+	private pathDraftEndPoint: THREE.Mesh;
 	private linkLineInScene: Map<string, THREE.Object3D> = new Map();
 	private linkLineGroup: THREE.Group = new THREE.Group();
 	private mapEventInScene: Map<string, THREE.Object3D> = new Map();
@@ -69,6 +82,7 @@ export class MapRenderer {
 	private readonly onMouseDown = (event: MouseEvent) => this.handleMouseDown(event);
 	private readonly onMouseUp = (event: MouseEvent) => this.handleMouseUp(event);
 	private readonly onMouseClick = (event: MouseEvent) => this.handleMouseClick(event);
+	private readonly onContextMenu = (event: MouseEvent) => this.handleContextMenu(event);
 	private readonly onKeyDown = (event: KeyboardEvent) => this.handleKeyPress(event);
 	private readonly onWindowResize = () => this.handleResize();
 	private readonly onContainerResize = () => this.handleResize();
@@ -91,6 +105,47 @@ export class MapRenderer {
 		// 链接辅助线
 		this.linkHelperLine = createDynamicLine(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 0));
 		this.scene.add(this.linkHelperLine.line);
+
+		// 路径编辑草稿线
+		this.pathDraftLine = new THREE.Line(
+			new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+			new THREE.LineBasicMaterial({
+				color: 0xffffff,
+				transparent: true,
+				opacity: 0.75,
+				depthTest: false,
+				depthWrite: false,
+			}),
+		);
+		this.pathDraftLine.renderOrder = 11;
+		this.pathDraftLine.visible = false;
+		this.scene.add(this.pathDraftLine);
+		this.pathDraftStartPoint = new THREE.Mesh(
+			new THREE.SphereGeometry(0.06, 12, 8),
+			new THREE.MeshBasicMaterial({
+				color: 0xffffff,
+				transparent: true,
+				opacity: 0.75,
+				depthTest: false,
+				depthWrite: false,
+			}),
+		);
+		this.pathDraftStartPoint.renderOrder = 11;
+		this.pathDraftStartPoint.visible = false;
+		this.scene.add(this.pathDraftStartPoint);
+		this.pathDraftEndPoint = new THREE.Mesh(
+			new THREE.SphereGeometry(0.06, 12, 8),
+			new THREE.MeshBasicMaterial({
+				color: 0xffffff,
+				transparent: true,
+				opacity: 0.75,
+				depthTest: false,
+				depthWrite: false,
+			}),
+		);
+		this.pathDraftEndPoint.renderOrder = 11;
+		this.pathDraftEndPoint.visible = false;
+		this.scene.add(this.pathDraftEndPoint);
 
 		// 相机初始位置
 		this.camera.position.set(0, 10, 0);
@@ -127,6 +182,8 @@ export class MapRenderer {
 
 		//加载地图索引路径
 		this.scene.add(this.mapIndexLineGroup);
+		this.scene.add(this.mapPathGroup);
+		this.scene.add(this.mapPathHitGroup);
 
 		this.composer = new EffectComposer(this.renderer);
 		this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -258,6 +315,10 @@ export class MapRenderer {
 		});
 
 		this.onEvent("change-operation-mode", (newMode) => {
+			if (newMode !== OperationMode.Select) {
+				this.clearPathDraft();
+				this.setActiveMapPath(undefined);
+			}
 			switch (newMode) {
 				case OperationMode.Edit:
 					this.outlinePass.selectedObjects = [];
@@ -305,6 +366,29 @@ export class MapRenderer {
 			this.updateMapIndex([...indexList]);
 		});
 
+		this.onEvent("map-path-added", (pathId) => {
+			this.renderMapPath(pathId);
+		});
+		this.onEvent("map-path-updated", (pathId) => {
+			this.refreshMapPath(pathId);
+		});
+		this.onEvent("map-path-removed", (pathId) => {
+			this.removeMapPathFromScene(pathId);
+			if (this.activeMapPathId === pathId) this.setActiveMapPath(undefined);
+		});
+		this.onEvent("map-paths-for-map-item-updated", (mapItemId) => {
+			this.refreshMapPathsForMapItem(mapItemId);
+		});
+		this.onEvent("map-paths-replaced", () => {
+			if (this.activeMapPathId && !useMapDataStore().findMapPathById(this.activeMapPathId)) {
+				this.setActiveMapPath(undefined);
+			}
+			this.rebuildMapPaths();
+		});
+		this.onEvent("map-path-selected", (pathId) => {
+			this.setActiveMapPath(pathId);
+		});
+
 		this.onEvent("map-item-type-selected", (itemTypeId) => {
 			this.updatePreviewBox(itemTypeId);
 		});
@@ -322,6 +406,8 @@ export class MapRenderer {
 			this.gridHelper.visible = visible;
 			this.axesHelper.visible = visible;
 			this.mapIndexLineGroup.visible = visible;
+			this.mapPathGroup.visible = visible;
+			this.mapPathHitGroup.visible = visible;
 			this.linkLineGroup.visible = visible;
 			this.linkHelperLine.line.visible = visible;
 		});
@@ -375,6 +461,7 @@ export class MapRenderer {
 		this.canvasEl.addEventListener("mousedown", this.onMouseDown);
 		this.canvasEl.addEventListener("mouseup", this.onMouseUp);
 		this.canvasEl.addEventListener("click", this.onMouseClick);
+		this.canvasEl.addEventListener("contextmenu", this.onContextMenu);
 	}
 
 	private initKeyBoardListener() {
@@ -458,14 +545,26 @@ export class MapRenderer {
 	}
 
 	private handleMouseMoveInSelect() {
-		const throughInstances = this.raycaster.intersectObjects(Array.from(this.mapItemsInScene.values()), true);
-		if (throughInstances.length > 0) {
-			const firstInstance = throughInstances[0];
-			const target = firstInstance.object;
-			//选择后
-		} else {
-			//TODO
-		}
+		const editorStore = useEditorStore();
+		const hit = this.raycaster.intersectObjects(this.mapPathHitGroup.children, true)[0];
+		const pathId = hit?.object.userData.mapPathId as string | undefined;
+		this.setHoveredMapPath(pathId);
+
+		const hoveredMapItemId = editorStore.pathDraftSourceId ? this.getMapItemIdFromRaycast() : undefined;
+		const hoveredMapItem =
+			hoveredMapItemId && hoveredMapItemId !== editorStore.pathDraftSourceId
+				? this.mapItemsInScene.get(hoveredMapItemId)
+				: undefined;
+		this.linkOutlinePass.selectedObjects = hoveredMapItem ? [hoveredMapItem] : [];
+
+		this.updatePathDraft();
+		this.canvasEl.style.cursor = editorStore.pathDraftSourceId
+			? hoveredMapItem
+				? "pointer"
+				: "crosshair"
+			: pathId
+				? "pointer"
+				: "default";
 	}
 
 	private handleMouseMoveInMove() {}
@@ -493,9 +592,15 @@ export class MapRenderer {
 				}
 				break;
 			case OperationMode.Select:
-				this.handleMouseClickInSelect();
+				this.handleMouseClickInSelect(event);
 				break;
 		}
+	}
+
+	private handleContextMenu(event: MouseEvent) {
+		if (!useEditorStore().pathDraftSourceId) return;
+		event.preventDefault();
+		this.clearPathDraft();
 	}
 
 	private handleMouseClickInCreate(): boolean {
@@ -563,7 +668,32 @@ export class MapRenderer {
 		return false; // 返回 false 表示没有切换模式
 	}
 
-	private handleMouseClickInSelect() {
+	private handleMouseClickInSelect(event: MouseEvent) {
+		const editorStore = useEditorStore();
+		const mapItemId = this.getMapItemIdFromRaycast();
+		if (editorStore.pathDraftSourceId && mapItemId) {
+			this.handlePathMapItemClick(mapItemId);
+			return;
+		}
+
+		const pathHit = this.raycaster.intersectObjects(this.mapPathHitGroup.children, true)[0];
+		const pathId = pathHit?.object.userData.mapPathId as string | undefined;
+		if (pathId) {
+			const isLinkMode = editorStore.isLinkMode;
+			this.clearPathDraft();
+			this.clearMultiSelect();
+			editorStore.currentMapItemId = "";
+			eventBus.emit("other-map-item-selected", "");
+			if (isLinkMode) {
+				editorStore.isLinkMode = false;
+				eventBus.emit("change-link-mode", false);
+			}
+			this.setActiveMapPath(pathId);
+			return;
+		}
+
+		if (editorStore.pathDraftSourceId) return;
+
 		const throughInstances = this.raycaster.intersectObjects(Array.from(this.mapItemsInScene.values()), true);
 		if (throughInstances.length > 0) {
 			const firstInstance = throughInstances[0];
@@ -572,43 +702,31 @@ export class MapRenderer {
 			let temp: THREE.Object3D | null = target;
 			while (temp) {
 				if (temp.userData.id && temp.userData.position) {
-					const isLinkMode = useEditorStore().isLinkMode;
-					const currentMapItemId = useEditorStore().currentMapItemId;
-					const id = temp.userData.id;
+					this.setActiveMapPath(undefined);
+					const isLinkMode = editorStore.isLinkMode;
+					const currentMapItemId = editorStore.currentMapItemId;
+					const id = temp.userData.id as string;
 					this.linkOutlinePass.selectedObjects = [];
 
-					// 检测 Ctrl/Cmd 键
-					const isMultiSelect = (window.event as MouseEvent)?.ctrlKey || (window.event as MouseEvent)?.metaKey;
-
 					if (isLinkMode) {
-						// 如果没有当前选中的 mapitem，退出绑定模式并正常选中
 						if (!currentMapItemId) {
-							useEditorStore().isLinkMode = false;
+							editorStore.isLinkMode = false;
 							eventBus.emit("change-link-mode", false);
-							// 继续执行普通选中逻辑
 						} else {
-							// 链接模式保持原有逻辑
 							this.linkOutlinePass.selectedObjects = [temp];
 							eventBus.emit("other-map-item-selected", id);
 							break;
 						}
 					}
 
-					if (isMultiSelect) {
-						// Ctrl 多选模式
-						const store = useEditorStore();
-						if (store.selectedMapItemIds.includes(id)) {
-							store.removeSelectedMapItemId(id);
-						} else {
-							store.addSelectedMapItemId(id);
-						}
-						this.updateSelectionHighlightWithObjects(store.selectedMapItemIds);
+					if (this.isModKey(event)) {
+						if (editorStore.selectedMapItemIds.includes(id)) editorStore.removeSelectedMapItemId(id);
+						else editorStore.addSelectedMapItemId(id);
+						this.updateSelectionHighlightWithObjects(editorStore.selectedMapItemIds);
 					} else {
-						// 普通单选模式
-						useEditorStore().setSelectedMapItemIds([id]);
+						editorStore.setSelectedMapItemIds([id]);
 						this.itemSelected(id);
 						this.outlinePass.selectedObjects = [temp];
-						// 把绑定的另一方高亮
 						const mapItem = useMapDataStore().findMapItemById(id);
 						if (mapItem) {
 							const targetId = mapItem.beLinked || mapItem.linkto || "";
@@ -617,21 +735,46 @@ export class MapRenderer {
 						}
 					}
 					break;
-				} else {
-					temp = temp.parent;
 				}
+				temp = temp.parent;
 			}
 		} else {
-			// 点击空白处，清空选择
-			const isLinkMode = useEditorStore().isLinkMode;
+			const isLinkMode = editorStore.isLinkMode;
 			this.clearMultiSelect();
 			eventBus.emit("other-map-item-selected", "");
-
-			// 如果当前是绑定模式，退出绑定模式
 			if (isLinkMode) {
-				useEditorStore().isLinkMode = false;
+				editorStore.isLinkMode = false;
 				eventBus.emit("change-link-mode", false);
 			}
+		}
+	}
+	private getMapItemIdFromRaycast(): string | undefined {
+		const hit = this.raycaster.intersectObjects(Array.from(this.mapItemsInScene.values()), true)[0];
+		let target: THREE.Object3D | null = hit?.object ?? null;
+		while (target) {
+			if (target.userData.id && target.userData.position) return target.userData.id as string;
+			target = target.parent;
+		}
+		return undefined;
+	}
+
+	private handlePathMapItemClick(mapItemId: string) {
+		const editorStore = useEditorStore();
+		const sourceId = editorStore.pathDraftSourceId;
+		this.setActiveMapPath(undefined);
+		if (!sourceId) {
+			editorStore.setPathDraftSource(mapItemId);
+			editorStore.setSelectedMapItemIds([mapItemId]);
+			this.outlinePass.selectedObjects = [this.mapItemsInScene.get(mapItemId)!];
+			return;
+		}
+
+		try {
+			const path = useMapDataStore().addMapPath({ fromMapItemId: sourceId, toMapItemId: mapItemId, initEnable: true });
+			this.clearPathDraft();
+			this.setActiveMapPath(path.id);
+		} catch (error: any) {
+			message.warning(error.message || "无法创建路径", 1.5);
 		}
 	}
 
@@ -663,15 +806,47 @@ export class MapRenderer {
 			eventBus.emit("request-save");
 		}
 
-		// Ctrl+Z 撤销删除
-		if (this.isModKey(event) && event.code === "KeyZ") {
+		const store = useEditorStore();
+		if (this.isModKey(event) && (event.code === "KeyZ" || event.code === "KeyY")) {
 			event.preventDefault();
-			const store = useEditorStore();
-			if (store.canUndoDelete) {
+			const wantsRedo = event.code === "KeyY" || event.shiftKey;
+			if (store.activeMapPathId) {
+				const changed = wantsRedo ? useMapDataStore().redoMapPathChange() : useMapDataStore().undoMapPathChange();
+				if (!changed) message.info(wantsRedo ? "没有可重做的路径操作" : "没有可撤销的路径操作", 1);
+				return;
+			}
+			if (!wantsRedo && store.canUndoDelete) {
 				eventBus.emit("undo-delete");
-			} else {
+			} else if (!wantsRedo) {
 				message.info("没有可撤销的删除记录", 1);
 			}
+			return;
+		}
+
+
+		if (!this.isModKey(event) && event.code === "KeyV") {
+			event.preventDefault();
+			const mapDataStore = useMapDataStore();
+			const validationResults = mapDataStore.validateMapPaths();
+			const errorCount = validationResults.filter((result) => result.level === "error").length;
+			const warningCount = validationResults.length - errorCount;
+			const pathNodeCount = mapDataStore.getPathMapItems().length;
+			const summary = `路径校验：${pathNodeCount} 个路径节点，${errorCount} 个错误，${warningCount} 个警告`;
+			if (errorCount > 0) message.error(summary, 3);
+			else if (warningCount > 0) message.warning(summary, 3);
+			else message.success(`路径校验通过：${pathNodeCount} 个路径节点`, 2);
+			return;
+		}
+
+		if (store.pathDraftSourceId && event.code === "Escape") {
+			event.preventDefault();
+			this.clearPathDraft();
+			return;
+		}
+
+		if ((event.code === "Delete" || event.code === "Backspace") && store.activeMapPathId) {
+			event.preventDefault();
+			useMapDataStore().removeMapPath(store.activeMapPathId);
 			return;
 		}
 
@@ -930,6 +1105,7 @@ export class MapRenderer {
 
 	private clearMultiSelect() {
 		useEditorStore().clearSelectedMapItemIds();
+		this.setActiveMapPath(undefined);
 		this.outlinePass.selectedObjects = [];
 		this.linkOutlinePass.selectedObjects = [];
 		this.multiSelectOutlinePass.selectedObjects = []; // 清空框选高亮
@@ -1044,7 +1220,7 @@ export class MapRenderer {
 
 	private async createMapItem(x: number, y: number, rotation: 0 | 1 | 2 | 3, currentItemType: MapItemType) {
 		const newMapItem: MapItem = {
-			id: generateShortId('map-item'),
+			id: generateMapItemId(),
 			x,
 			y,
 			rotation,
@@ -1140,8 +1316,13 @@ export class MapRenderer {
 		}
 
 		this.loadMapBackground();
-		//加载索引路径
+		// mapPaths 是编辑器中的路径真相源；mapIndex 仅保留兼容可视化。
+		this.rebuildMapPaths();
 		this.updateMapIndex([...mapData.mapIndex]);
+		const editorStore = useEditorStore();
+		editorStore.clearMapPathHistory();
+		this.clearPathDraft();
+		this.setActiveMapPath(undefined);
 		//TODO
 		useEditorStore().setLoading(false);
 		this.lookAtCenter();
@@ -1189,6 +1370,7 @@ export class MapRenderer {
 		if (mapItem && object) {
 			this.setItemPositionOnMap(object, mapItem.x, mapItem.y, mapItem.rotation);
 		}
+		this.refreshMapPathsForMapItem(id);
 	}
 
 	private async handleModelChanged(modelId: string) {
@@ -1507,11 +1689,12 @@ export class MapRenderer {
 	 * 完全重新绘制路径
 	 */
 	private refreshMapIndexPath() {
-		// 清空现有路径
+		// mapPaths 是编辑器的路径真相源；旧 mapIndex 仅在无 mapPaths 的兼容场景下显示。
 		this.mapIndexLineGroup.clear();
+		const mapDataStore = useMapDataStore();
+		if (mapDataStore.mapPaths.length > 0) return;
 
-		// 重新绘制
-		const mapIndex = useMapDataStore().mapIndex;
+		const mapIndex = mapDataStore.mapIndex;
 		if (mapIndex.length === 0) return;
 
 		// 接头
@@ -1542,6 +1725,7 @@ export class MapRenderer {
 
 	private clearSelect() {
 		useEditorStore().currentMapItemId = "";
+		this.setActiveMapPath(undefined);
 		useEditorStore().isLinkMode = false;
 		this.outlinePass.selectedObjects = [];
 		this.linkOutlinePass.selectedObjects = [];
@@ -1667,7 +1851,199 @@ export class MapRenderer {
 		}
 	}
 
+	private clearPathDraft() {
+		useEditorStore().setPathDraftSource(undefined);
+		this.pathDraftLine.visible = false;
+		this.pathDraftStartPoint.visible = false;
+		this.pathDraftEndPoint.visible = false;
+	}
+
+	private setActiveMapPath(pathId?: string) {
+		const previous = this.activeMapPathId;
+		this.activeMapPathId = pathId;
+		useEditorStore().setActiveMapPath(pathId);
+		if (previous) this.refreshMapPath(previous);
+		if (pathId && pathId !== previous) this.refreshMapPath(pathId);
+	}
+
+	private setHoveredMapPath(pathId?: string) {
+		if (this.hoveredMapPathId === pathId) return;
+		const previous = this.hoveredMapPathId;
+		this.hoveredMapPathId = pathId;
+		if (previous) this.refreshMapPath(previous);
+		if (pathId) this.refreshMapPath(pathId);
+	}
+
+	private updatePathDraft() {
+		const sourceId = useEditorStore().pathDraftSourceId;
+		if (!sourceId) {
+			this.pathDraftLine.visible = false;
+			this.pathDraftStartPoint.visible = false;
+			this.pathDraftEndPoint.visible = false;
+			return;
+		}
+		const source = this.getMapItemCenter(sourceId);
+		const hit = this.raycaster.intersectObject(this.plane, false)[0];
+		if (!source || !hit) {
+			this.pathDraftLine.visible = false;
+			this.pathDraftStartPoint.visible = false;
+			this.pathDraftEndPoint.visible = false;
+			return;
+		}
+		const target = hit.point.clone();
+		target.y = source.y;
+		this.pathDraftLine.geometry.dispose();
+		this.pathDraftLine.geometry = new THREE.BufferGeometry().setFromPoints([source, target]);
+		this.pathDraftStartPoint.position.copy(source);
+		this.pathDraftEndPoint.position.copy(target);
+		this.pathDraftLine.visible = true;
+		this.pathDraftStartPoint.visible = true;
+		this.pathDraftEndPoint.visible = true;
+	}
+
+	private getMapItemCenter(mapItemId: string): THREE.Vector3 | undefined {
+		const mapItemModel = this.mapItemsInScene.get(mapItemId);
+		if (mapItemModel) {
+			const box = new THREE.Box3().setFromObject(mapItemModel);
+			if (!box.isEmpty()) return box.getCenter(new THREE.Vector3());
+			return mapItemModel.getWorldPosition(new THREE.Vector3());
+		}
+
+		const item = useMapDataStore().findMapItemById(mapItemId);
+		return item ? new THREE.Vector3(item.x + 0.5, 0, item.y + 0.5) : undefined;
+	}
+
+	private getMapPathSegment(path: MapPath): { start: THREE.Vector3; end: THREE.Vector3 } | undefined {
+		const start = this.getMapItemCenter(path.fromMapItemId);
+		const end = this.getMapItemCenter(path.toMapItemId);
+		return start && end ? { start, end } : undefined;
+	}
+
+	private rebuildMapPaths() {
+		this.clearMapPaths();
+		for (const path of useMapDataStore().mapPaths) this.renderMapPath(path.id);
+	}
+
+	private renderMapPath(pathId: string) {
+		this.removeMapPathFromScene(pathId);
+		const path = useMapDataStore().findMapPathById(pathId);
+		if (!path) return;
+		const segment = this.getMapPathSegment(path);
+		if (!segment) return;
+		const { start, end } = segment;
+		const length = start.distanceTo(end);
+
+		const isActive = this.activeMapPathId === path.id;
+		const isHovered = this.hoveredMapPathId === path.id;
+		const disabled = path.initEnable === false;
+		const color = isActive ? 0x65ff75 : isHovered ? 0xffca3a : disabled ? 0x8f5353 : 0x18b7d5;
+		const lineRadius = isActive || isHovered ? 0.045 : 0.032;
+		const line = new THREE.Mesh(
+			new THREE.TubeGeometry(new THREE.LineCurve3(start, end), 1, lineRadius, 8, false),
+			new THREE.MeshBasicMaterial({
+				color,
+				transparent: true,
+				opacity: disabled ? 0.7 : 0.95,
+				depthTest: false,
+				depthWrite: false,
+			}),
+		);
+		line.renderOrder = 10;
+
+		const endpointRadius = isActive || isHovered ? 0.09 : 0.07;
+		const createEndpoint = (position: THREE.Vector3) => {
+			const endpoint = new THREE.Mesh(
+				new THREE.SphereGeometry(endpointRadius, 12, 8),
+				new THREE.MeshBasicMaterial({
+					color,
+					transparent: true,
+					opacity: disabled ? 0.7 : 1,
+					depthTest: false,
+					depthWrite: false,
+				}),
+			);
+			endpoint.position.copy(position);
+			endpoint.renderOrder = 10;
+			return endpoint;
+		};
+
+		const visual = new THREE.Group();
+		visual.renderOrder = 10;
+		visual.userData.mapPathId = path.id;
+		visual.add(line, createEndpoint(start), createEndpoint(end));
+
+		// 箭头尖端朝向终点，明确表示路径从 fromMapItemId 指向 toMapItemId。
+		if (length > 0.001) {
+			const direction = end.clone().sub(start).normalize();
+			const arrowLength = Math.min(0.3, Math.max(0.14, length * 0.24));
+			const arrow = new THREE.Mesh(
+				new THREE.ConeGeometry(arrowLength * 0.35, arrowLength, 16),
+				new THREE.MeshBasicMaterial({
+					color,
+					transparent: true,
+					opacity: disabled ? 0.7 : 1,
+					depthTest: false,
+					depthWrite: false,
+				}),
+			);
+			// ConeGeometry 默认沿 +Y 轴；旋转后使锥尖指向路径终点。
+			arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+			arrow.position.copy(end).addScaledVector(direction, -arrowLength / 2);
+			arrow.renderOrder = 11;
+			visual.add(arrow);
+		}
+		const hit = length < 0.001
+			? new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }))
+			: new THREE.Mesh(
+				new THREE.TubeGeometry(new THREE.LineCurve3(start, end), Math.max(8, Math.ceil(length * 16)), 0.13, 6, false),
+				new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+			);
+		if (length < 0.001) hit.position.copy(start);
+		hit.userData.mapPathId = path.id;
+		this.mapPathGroup.add(visual);
+		this.mapPathHitGroup.add(hit);
+		this.mapPathsInScene.set(path.id, { visual, hit });
+	}
+
+	private refreshMapPath(pathId: string) {
+		this.renderMapPath(pathId);
+	}
+
+	private refreshMapPathsForMapItem(mapItemId: string) {
+		for (const path of useMapDataStore().mapPaths) {
+			if (path.fromMapItemId === mapItemId || path.toMapItemId === mapItemId) this.refreshMapPath(path.id);
+		}
+	}
+
+	private removeMapPathFromScene(pathId: string) {
+		const rendered = this.mapPathsInScene.get(pathId);
+		if (!rendered) return;
+		this.mapPathGroup.remove(rendered.visual);
+		this.mapPathHitGroup.remove(rendered.hit);
+		this.disposeObjectResources(rendered.visual);
+		this.disposeObjectResources(rendered.hit);
+		this.mapPathsInScene.delete(pathId);
+	}
+
+	private clearMapPaths() {
+		for (const pathId of [...this.mapPathsInScene.keys()]) this.removeMapPathFromScene(pathId);
+	}
+
+	private disposeObjectResources(object: THREE.Object3D) {
+		object.traverse((child) => {
+			if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+				child.geometry.dispose();
+				const materials = Array.isArray(child.material) ? child.material : [child.material];
+				for (const material of materials) material.dispose();
+			}
+		});
+	}
+
 	private updateMapIndex(indexList: string[]) {
+		if (useMapDataStore().mapPaths.length > 0) {
+			this.mapIndexLineGroup.clear();
+			return;
+		}
 		if (indexList.length === 0) {
 			this.mapIndexLineGroup.clear();
 			return;
@@ -1775,6 +2151,7 @@ export class MapRenderer {
 		this.canvasEl.removeEventListener("mousedown", this.onMouseDown);
 		this.canvasEl.removeEventListener("mouseup", this.onMouseUp);
 		this.canvasEl.removeEventListener("click", this.onMouseClick);
+		this.canvasEl.removeEventListener("contextmenu", this.onContextMenu);
 		document.removeEventListener("keydown", this.onKeyDown);
 
 		// 释放动画管理器

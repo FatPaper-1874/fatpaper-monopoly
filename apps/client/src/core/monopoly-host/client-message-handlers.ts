@@ -51,6 +51,12 @@ export function handleClientSocketMessage(
 		case SocketMsgType.ChangeMap:
 			handleChangeMap(conn, msg, host, clientId);
 			break;
+		case SocketMsgType.MapLocalCheck:
+			handleMapLocalCheck(conn, msg, host, clientId);
+			break;
+		case SocketMsgType.MapTransferRequest:
+			handleMapTransferRequest(conn, msg, host, clientId);
+			break;
 		case SocketMsgType.ChangeRole:
 			handleChangeRole(conn, msg, host, clientId);
 			break;
@@ -95,7 +101,13 @@ const handleChangeColor: ClientMessageHandler<SocketMsgType.ChangeColor> = (conn
 	host.getRoom().changeColor(clientId, msg.data);
 };
 const handleChangeMap: ClientMessageHandler<SocketMsgType.ChangeMap> = (conn, msg, host, clientId) => {
-	host.getRoom().changeMap(msg.data);
+	void host.getRoom().changeMap(msg.data);
+};
+const handleMapLocalCheck: ClientMessageHandler<SocketMsgType.MapLocalCheck> = (conn, msg, host, clientId) => {
+	host.getRoom().handleMapLocalCheck(clientId, msg.data);
+};
+const handleMapTransferRequest: ClientMessageHandler<SocketMsgType.MapTransferRequest> = (conn, msg, host, clientId) => {
+	host.getRoom().handleMapTransferRequest(clientId, msg.data);
 };
 const handleChangeRole: ClientMessageHandler<SocketMsgType.ChangeRole> = (conn, msg, host, clientId) => {
 	host.getRoom().changeRole(clientId, msg.data);
@@ -116,10 +128,18 @@ const handleOperation: ClientMessageHandler<SocketMsgType.Operation> = (conn, ms
 		return;
 	}
 
+	// 自定义地图加载完成必须匹配当前会话，迟到的旧消息不可唤醒等待者。
+	if (operateType === OperateType.MapResourceLoaded) {
+		if (room.handleMapResourceLoaded(clientId, (msg.extra as { mapLoadSessionId?: unknown } | undefined)?.mapLoadSessionId, msg.extra)) {
+			host.resumeClientHeartCheck(clientId);
+		}
+		return;
+	}
+
 	// 心跳检查逻辑
 	if (operateType === OperateType.LoadingStarted) {
 		host.pauseClientHeartCheck(clientId);
-	} else if (operateType === OperateType.GameInitFinished || operateType === OperateType.MapResourceLoaded) {
+	} else if (operateType === OperateType.GameInitFinished) {
 		host.resumeClientHeartCheck(clientId);
 	}
 

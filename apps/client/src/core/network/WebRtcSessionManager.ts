@@ -47,14 +47,31 @@ export interface WebRtcSessionManagerOptions {
 const MAP_CHUNK_BIN_TYPE = 1;
 
 /**
- * 解析地图分块二进制包
- * 包格式: [1 字节 type][4 字节 chunkIndex 大端序][chunk 原始字节]
- * 返回 null 表示不是合法的地图分块包
+ * 解析地图分块二进制包。
+ * 新格式: [type][session 长度][session UTF-8][chunkIndex][数据]；旧格式: [type][chunkIndex][数据]。
+ * 返回 null 表示不是合法的地图分块包。
  */
 function parseMapChunkBinaryPacket(bytes: Uint8Array): SocketMessage<SocketMsgType.MapChunk, SocketMsgSource.Server> | null {
 	if (bytes.length < 5 || bytes[0] !== MAP_CHUNK_BIN_TYPE) return null;
-	const chunkIndex =
-		(((bytes[1] << 24) | (bytes[2] << 16) | (bytes[3] << 8) | bytes[4]) >>> 0);
+
+	const sessionLength = bytes[1];
+	const indexOffset = 2 + sessionLength;
+	const dataOffset = indexOffset + 4;
+	const sessionCandidate =
+		sessionLength > 0 && bytes.length >= dataOffset ? new TextDecoder().decode(bytes.slice(2, indexOffset)) : "";
+	const isNewProtocolPacket = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(sessionCandidate);
+
+	if (isNewProtocolPacket) {
+		const chunkIndex =
+			(((bytes[indexOffset] << 24) | (bytes[indexOffset + 1] << 16) | (bytes[indexOffset + 2] << 8) | bytes[indexOffset + 3]) >>> 0);
+		return {
+			type: SocketMsgType.MapChunk,
+			source: SocketMsgSource.Server,
+			data: { mapLoadSessionId: sessionCandidate, chunkIndex, data: bytes.slice(dataOffset) },
+		};
+	}
+
+	const chunkIndex = (((bytes[1] << 24) | (bytes[2] << 16) | (bytes[3] << 8) | bytes[4]) >>> 0);
 	return {
 		type: SocketMsgType.MapChunk,
 		source: SocketMsgSource.Server,

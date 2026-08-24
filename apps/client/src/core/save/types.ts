@@ -1,4 +1,4 @@
-import { Buff, DiceInfo, GameLog, ModifierSnapshot } from "@mine-monopoly/types";
+import { Buff, DiceInfo, GameLog, MapPathRuntimeState, ModifierSnapshot } from "@mine-monopoly/types";
 
 /** Player 全量快照 */
 export interface PlayerSnapshot {
@@ -6,6 +6,8 @@ export interface PlayerSnapshot {
 	roleId: string;
 	money: number;
 	positionIndex: number;
+	/** MapPath V2 的位置真相；缺失时按旧 positionIndex 迁移。 */
+	positionMapItemId?: string;
 	stop: number;
 	isBankrupted: boolean;
 	isOffline: boolean;
@@ -36,6 +38,8 @@ export interface SaveSnapshot {
 	gameLogList: GameLog[];
 	playerSnapshots: Record<string, PlayerSnapshot>;
 	propertySnapshots: Record<string, PropertySnapshot>;
+	/** MapPath V2 会话状态；由 Worker 写入，恢复时原样交回 Worker。 */
+	mapPathRuntimeState?: MapPathRuntimeState;
 }
 
 /** IndexedDB 存档记录 */

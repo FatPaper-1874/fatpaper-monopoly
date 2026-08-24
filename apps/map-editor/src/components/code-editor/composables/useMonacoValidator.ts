@@ -1,18 +1,13 @@
-import * as monaco from "monaco-editor";
-import { mapContentService } from "@src/services";
-import { eventBus } from "@src/utils/event-bus";
+import type * as monaco from "monaco-editor";
+import { useMapDataStore } from "@src/stores";
 import staticEditorLib from "../editor-lib.d.ts?raw";
+import { getMonacoSingleton } from "./useMonacoInstance";
+import { syncMonacoTypeLibs } from "./useMonacoTypeLibs";
 import {
 	type CodeTemplateExtraParams,
 	type EditorCodeType,
 	resolveValidationTemplateConfig,
 } from "../code-templates";
-
-// 监听类型刷新事件
-eventBus.on("refresh-monaco-types", () => {
-	// 清除 Monaco Promise 缓存，强制重新初始化
-	monacoPromise = null;
-});
 
 /**
  * 验证结果
@@ -28,9 +23,10 @@ export interface ValidateTemplateOptions extends CodeTemplateExtraParams {
 }
 
 /**
- * 使用 Monaco TS 语言服务校验 effectCode
+ * 使用 Monaco TS 语言服务校验 effectCode。
  *
- * 不依赖编辑器实例，直接创建临时 model 利用已注入的 extraLibs 进行类型检查。
+ * 校验器与界面编辑器共用 Monaco 单例、compiler options 和 extra libs；
+ * 不再在保存时清空或恢复类型库。
  */
 export function useMonacoValidator() {
 	/**
@@ -65,58 +61,30 @@ export function useMonacoValidator() {
 			};
 		}
 
-		// 获取全局 Monaco 单例
-		const monacoInstance = await getMonacoInstance();
-		if (!monacoInstance) {
+		let monacoInstance: typeof monaco;
+		try {
+			monacoInstance = await getMonacoSingleton();
+		} catch {
 			return {
 				valid: false,
 				errors: [{ line: 0, column: 0, message: "Monaco instance not available" }],
 			};
 		}
 
+		// 使用与编辑器完全相同的类型库来源。若类型已是最新内容，不会触发 TS worker 重载。
+		const mapDataStore = useMapDataStore();
+		syncMonacoTypeLibs(monacoInstance, {
+			staticTypes: staticEditorLib,
+			extraLibs: mapDataStore.extraLibs || "",
+			uiTemplates: mapDataStore.uiTemplates || [],
+			gameSettingForm: mapDataStore.gameSettingForm || [],
+			modifierTemplates: mapDataStore.modifierTemplates || [],
+		});
+
 		const mode = normalizedOptions.mode || "snippet";
 		const { header, footer } = resolveValidationTemplateConfig(normalizedCodeType, normalizedOptions);
 		const fullCode = mode === "full" ? code : header + code + (footer ? "\n" + footer : "");
 		const lineOffset = mode === "full" ? 0 : Math.max(0, header.split("\n").length - 1);
-
-		// 注入完整类型库到 Monaco TS 语言服务
-		const tsDefaults = monacoInstance.languages.typescript.typescriptDefaults;
-		const libs: { content: string; filePath: string }[] = [];
-
-		// 静态类型（enum、interface 等）
-		if (staticEditorLib) {
-			libs.push({ content: staticEditorLib, filePath: 'file:///static-types.d.ts' });
-		}
-
-		// 额外库代码（用户自定义 + 动态类型 + 游戏设置）
-		try {
-			const dynamicLibs = await mapContentService.getAllTypeLibs();
-			if (dynamicLibs.extraLibs) {
-				libs.push({ content: dynamicLibs.extraLibs, filePath: 'file:///extra-libs.d.ts' });
-			}
-			if (dynamicLibs.gameSettingTypes) {
-				libs.push({ content: dynamicLibs.gameSettingTypes, filePath: 'file:///game-settings.d.ts' });
-			}
-			if (dynamicLibs.modifierTemplateTypes) {
-				libs.push({ content: dynamicLibs.modifierTemplateTypes, filePath: 'file:///modifier-templates.d.ts' });
-			}
-			if (dynamicLibs.uiTemplateTypes) {
-				libs.push({ content: dynamicLibs.uiTemplateTypes, filePath: 'file:///ui-templates.d.ts' });
-			}
-		} catch {
-			// extra libs not available, continue with static only
-		}
-
-		if (libs.length === 0) {
-			return { valid: false, errors: [{ line: 0, column: 0, message: "No type libraries available" }] };
-		}
-
-		// 保存当前 extraLibs，校验完成后恢复，避免影响 UI 编辑器
-		const prevLibs = tsDefaults.getExtraLibs();
-		// 强制清除 Monaco 缓存，确保使用最新类型
-		tsDefaults.setExtraLibs([]);
-		await new Promise(resolve => setTimeout(resolve, 0)); // 给 Monaco 处理时间
-		tsDefaults.setExtraLibs(libs);
 
 		// 创建临时 model
 		const uri = monacoInstance.Uri.parse(`file:///validate-${Date.now()}.ts`);
@@ -152,8 +120,6 @@ export function useMonacoValidator() {
 			return { valid: errors.length === 0, errors };
 		} finally {
 			model.dispose();
-			// 恢复 extraLibs，避免影响 UI 编辑器的类型提示
-			tsDefaults.setExtraLibs(prevLibs as any);
 		}
 	}
 
@@ -161,38 +127,7 @@ export function useMonacoValidator() {
 }
 
 /**
- * 获取已初始化的 Monaco 全局单例
- */
-let monacoPromise: Promise<typeof monaco | null> | null = null;
-
-function getMonacoInstance(): Promise<typeof monaco | null> {
-	if (!monacoPromise) {
-		monacoPromise = import("monaco-editor").then((m): typeof monaco => {
-			// 检查是否已初始化 compiler options
-			const defaults = m.languages.typescript.typescriptDefaults;
-			try {
-				defaults.setCompilerOptions({
-					target: m.languages.typescript.ScriptTarget.ES2020,
-					allowNonTsExtensions: true,
-					moduleResolution: m.languages.typescript.ModuleResolutionKind.NodeJs,
-					module: m.languages.typescript.ModuleKind.CommonJS,
-					noEmit: true,
-					esModuleInterop: true,
-					strict: true,
-					noImplicitAny: true,
-					strictNullChecks: true,
-				});
-			} catch {
-				// compiler options already set
-			}
-			return m;
-		}).catch(() => null);
-	}
-	return monacoPromise;
-}
-
-/**
- * 等待 Monaco TS worker 产出指定 URI 的诊断信息
+ * 等待 Monaco TS worker 产出指定 URI 的诊断信息。
  *
  * 使用 debounce 机制确保 TS worker 完成全部分析后再返回结果。
  * TS worker 可能分多批次产出诊断（语法分析 → 语义分析），

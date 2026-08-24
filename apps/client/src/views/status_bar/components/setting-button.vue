@@ -13,16 +13,19 @@ import { useRoomInfo, useChat, useGameLog } from "@src/store";
 import { useGameData } from "@src/store/game";
 import router from "@src/router";
 import LogPanel from "@src/components/log-panel";
-import CachePanel from "@src/components/cache-panel";
+
 import AiSettingPanel from "./ai-setting-panel.vue";
 
 const settingVisible = ref(false);
 const logPanelVisible = ref(false);
 const aiSettingVisible = ref(false);
-const cachePanelVisible = ref(false);
 
 // 暴露 window 对象给模板使用
 const win = window as any;
+const localMapDirectoryStatus = ref<{ readable: boolean; writable: boolean } | null>(null);
+const hasLocalMapRepository = computed(() => {
+	return Boolean(win.platformAPI?.importLocalMap && win.platformAPI?.scanLocalMaps && win.platformAPI?.openLocalMapDirectory);
+});
 const hasStandaloneAIConsole = computed(() => Boolean(win.platformAPI?.openAIConsole));
 const aiEntryLabel = computed(() => (hasStandaloneAIConsole.value ? "打开 AI 控制台" : "打开 AI 设置"));
 
@@ -49,6 +52,62 @@ const openLogsFolder = () => {
 			FpMessage({ type: "error", message: "无法打开日志文件夹" });
 		});
 };
+
+async function refreshLocalMapDirectoryStatus() {
+	try {
+		localMapDirectoryStatus.value = (await win.platformAPI?.getLocalMapDirectoryStatus?.()) ?? null;
+	} catch {
+		localMapDirectoryStatus.value = null;
+	}
+}
+
+async function handleOpenLocalMapDirectory() {
+	try {
+		await refreshLocalMapDirectoryStatus();
+		await win.platformAPI?.openLocalMapDirectory?.();
+		if (localMapDirectoryStatus.value && !localMapDirectoryStatus.value.writable) {
+			FpMessage({ type: "warning", message: "本地地图仓库目录不可写；仍可从房主接收地图。" });
+		}
+	} catch (error) {
+		FpMessage({ type: "error", message: `打开本地地图目录失败: ${error instanceof Error ? error.message : "未知错误"}` });
+	}
+}
+
+async function handleImportLocalMap() {
+	try {
+		const result = await win.platformAPI?.importLocalMap?.();
+		if (!result || result.status === "failed") {
+			if (result?.message !== "已取消导入") FpMessage({ type: "error", message: result?.message || "导入地图失败" });
+			return;
+		}
+		if (result.status === "duplicate") {
+			FpMessage({ type: "info", message: `本地地图仓库已包含“${result.fileName || "该地图"}”。` });
+			return;
+		}
+		FpMessage({ type: "success", message: `已导入本地地图“${result.fileName}”。` });
+		await refreshLocalMapDirectoryStatus();
+	} catch (error) {
+		FpMessage({ type: "error", message: `导入本地地图失败: ${error instanceof Error ? error.message : "未知错误"}` });
+	}
+}
+
+async function handleScanLocalMaps() {
+	try {
+		const result = await win.platformAPI?.scanLocalMaps?.();
+		if (!result) return;
+		if (result.message) {
+			FpMessage({ type: "error", message: `扫描本地地图失败: ${result.message}` });
+			return;
+		}
+		FpMessage({
+			type: "success",
+			message: `地图仓库扫描完成：${result.files} 个文件，新增 ${result.indexed} 个，更新 ${result.updated} 个。`,
+		});
+		await refreshLocalMapDirectoryStatus();
+	} catch (error) {
+		FpMessage({ type: "error", message: `扫描本地地图失败: ${error instanceof Error ? error.message : "未知错误"}` });
+	}
+}
 
 async function handleExitGame() {
 	const isOwner = useRoomInfo().amIRoomOwner;
@@ -121,6 +180,7 @@ const tempMusicMuted = ref(settingStore.musicMuted);
 // 监听设置面板打开，重置临时状态
 watch(settingVisible, (isOpen) => {
 	if (isOpen) {
+		void refreshLocalMapDirectoryStatus();
 		tempLockRole.value = settingStore.lockRole;
 		tempEnableTurnFocus.value = settingStore.enableTurnFocus;
 		tempChatRenderMode.value = settingStore.chatRenderMode;
@@ -578,11 +638,22 @@ const applySettings = () => {
 					</div>
 				</div>
 
-				<!-- 缓存管理（仅 Electron 平台，独立面板） -->
-				<div v-if="win.platformAPI?.getMapCacheStat" class="setting-item">
-					<div class="label">缓存</div>
-					<div class="content log-actions">
-						<button @click="cachePanelVisible = true" class="btn-small log-button">缓存管理</button>
+				<!-- 本地地图仓库（仅 Electron 平台） -->
+				<div v-if="hasLocalMapRepository" class="setting-item">
+					<div class="label">本地地图</div>
+					<div class="content map-repository-actions">
+						<button @click="handleImportLocalMap" class="btn-small">导入地图</button>
+						<button @click="handleOpenLocalMapDirectory" class="btn-small">打开目录</button>
+						<button @click="handleScanLocalMaps" class="btn-small">重新扫描</button>
+						<span v-if="localMapDirectoryStatus" class="map-directory-status">
+							{{
+								!localMapDirectoryStatus.readable
+									? "目录不可访问"
+									: localMapDirectoryStatus.writable
+										? "目录可读写"
+										: "目录不可写"
+							}}
+						</span>
 					</div>
 				</div>
 
@@ -626,7 +697,7 @@ const applySettings = () => {
 
 	<!-- 日志面板 -->
 	<LogPanel v-model:visible="logPanelVisible" />
-	<CachePanel v-model:visible="cachePanelVisible" />
+
 	<AiSettingPanel v-if="!hasStandaloneAIConsole" v-model:visible="aiSettingVisible" />
 </template>
 
@@ -777,6 +848,19 @@ const applySettings = () => {
 						color: var(--fp-color-primary);
 						font-size: 1.1rem;
 						margin: 0 0.1rem;
+					}
+				}
+
+				&.map-repository-actions {
+					gap: 0.5rem;
+					justify-content: center;
+					flex-wrap: wrap;
+
+					.map-directory-status {
+						width: 100%;
+						font-size: 0.8rem;
+						text-align: center;
+						color: var(--fp-color-tertiary);
 					}
 				}
 

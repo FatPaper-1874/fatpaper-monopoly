@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { useEditorStore, useMapDataStore } from "@src/stores";
 import MapItemInfo from "../common/map-item-info.vue";
+import MapPathDetails from "../common/map-path-details.vue";
+
 import PropertyForm from "../manager/forms/property-form/index.vue";
 import MapEventSelector from "../common/map-event-selector.vue";
 import { computed, ref } from "vue";
@@ -72,6 +74,21 @@ function handleMove(direction: 'up' | 'down' | 'left' | 'right') {
 		console.error('[移动函数] 发送事件失败:', e);
 		message.error(e.message, 2);
 	}
+}
+
+
+function handleStartPath() {
+	if (!currentMapItemId.value) return;
+
+	if (editorStore.pathDraftSourceId === currentMapItemId.value) {
+		editorStore.setPathDraftSource(undefined);
+		message.info("已取消添加路径", 1);
+		return;
+	}
+
+	editorStore.setActiveMapPath(undefined);
+	editorStore.setPathDraftSource(currentMapItemId.value);
+	message.info("请选择另一个 MapItem 作为路径终点", 1);
 }
 
 function handleStartLink() {
@@ -155,6 +172,7 @@ function handleRotate(direction: 'clockwise' | 'counter-clockwise') {
 	<div class="select-mode-ui">
 		<div class="ui-container left">
 			<a-space direction="vertical">
+
 				<!-- 多选状态提示 -->
 				<template v-if="hasMultipleSelection">
 					<div class="multi-select-panel">
@@ -262,14 +280,23 @@ function handleRotate(direction: 'clockwise' | 'counter-clockwise') {
 							</a-button>
 						</div>
 					</div>
-					<a-button
-						type="primary"
-						v-if="!(currentMapItem.linkto || currentMapItem.beLinked)"
-						@click="handleStartLink"
-					>
-						绑定地皮
-					</a-button>
-					<a-button type="primary" danger v-else @click="handleUnLink">解除绑定</a-button>
+					<a-space>
+						<a-button
+							type="primary"
+							v-if="!(currentMapItem.linkto || currentMapItem.beLinked)"
+							@click="handleStartLink"
+						>
+							绑定地皮
+						</a-button>
+						<a-button type="primary" danger v-else @click="handleUnLink">解除绑定</a-button>
+						<a-button
+							type="primary"
+							:danger="editorStore.pathDraftSourceId === currentMapItem.id"
+							@click="handleStartPath"
+						>
+							{{ editorStore.pathDraftSourceId === currentMapItem.id ? "取消添加路径" : "添加路径" }}
+						</a-button>
+					</a-space>
 					<a-button type="primary" @click="handleMapItemDelete" danger v-if="currentMapItem">
 						删除这个MapItem
 					</a-button>
@@ -278,6 +305,7 @@ function handleRotate(direction: 'clockwise' | 'counter-clockwise') {
 		</div>
 		<div class="ui-container right">
 			<a-space direction="vertical">
+				<map-path-details />
 				<template v-if="currentMapItem && currentMapItem.beLinked && !hasMultipleSelection">
 					<property-form />
 				</template>

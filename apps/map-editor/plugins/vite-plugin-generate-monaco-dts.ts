@@ -106,15 +106,36 @@ export default function generateMonacoDTS() {
 			scanAndGenerate();
 		},
 		configureServer(server: any) {
-			server.watcher.on("change", (file: string) => {
-				if (file.endsWith(".ts") && fs.existsSync(file)) {
+			const appDir = process.cwd();
+			const typeSourceDir = path.resolve(appDir, "../../packages/types");
+
+			// editor-lib.ts 只会直接变更自身；基础类型位于 workspace 的 packages/types，
+			// 必须显式加入 watcher，才能在 dev 期间自动重新生成 editor-lib.d.ts。
+			server.watcher.add(path.join(typeSourceDir, "**/*.ts"));
+
+			const regenerateForTypeChange = (file: string) => {
+				if (!file.endsWith(".ts")) return;
+
+				const relativeToTypes = path.relative(typeSourceDir, file);
+				const isTypeSource = relativeToTypes && !relativeToTypes.startsWith("..") && !path.isAbsolute(relativeToTypes);
+				if (isTypeSource) {
+					console.log(`[monaco-dts] Base type changed: ${path.basename(file)}`);
+					scanAndGenerate();
+					return;
+				}
+
+				if (fs.existsSync(file)) {
 					const content = fs.readFileSync(file, "utf-8");
 					if (content.includes("//@need-to-parse")) {
-						console.log(`[monaco-dts] File changed: ${path.basename(file)}`);
+						console.log(`[monaco-dts] Entry file changed: ${path.basename(file)}`);
 						generateForFile(file);
 					}
 				}
-			});
+			};
+
+			server.watcher.on("change", regenerateForTypeChange);
+			server.watcher.on("add", regenerateForTypeChange);
+			server.watcher.on("unlink", regenerateForTypeChange);
 		},
 	};
 }

@@ -95,7 +95,8 @@ export function validateMap(
 	items: any[],
 	events: any[],
 	roles: any[],
-	mapIndex: string[]
+	mapIndex: string[],
+	hasMapPaths = false,
 ): {
 	errors: string[];
 	warnings: string[];
@@ -111,9 +112,9 @@ export function validateMap(
 	}
 
 	// Check map index
-	if (mapIndex.length === 0) {
-		errors.push("Map index is empty");
-	} else {
+	if (mapIndex.length === 0 && !hasMapPaths) {
+		errors.push("Map index is empty and no MapPath V2 graph is configured");
+	} else if (mapIndex.length > 0) {
 		// Verify all items in map index exist
 		const itemIds = new Set(items.map((i) => i.id));
 		mapIndex.forEach((itemId) => {

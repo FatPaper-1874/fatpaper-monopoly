@@ -25,6 +25,9 @@ import {
 	MapChunkData,
 	MapChunkEndData,
 	MapChunkAbortData,
+	CustomMapDescriptor,
+	MapLocalCheckData,
+	MapTransferRequestData,
 } from "@mine-monopoly/types";
 import { WorkerCommType, WorkerState } from "@src/enums/worker";
 import { WorkerCommMsg, HeartbeatData, WorkerStateChangedData, GMAction, GMActionResponseData, GameProcessDebugState } from "@src/interfaces/worker";
@@ -65,6 +68,12 @@ const MAP_CHUNK_BIN_TYPE = 1;
 
 export class Room {
 	private mapInfo: RoomMapInfo | undefined;
+	/** 每个自定义地图加载会话中，客机已报告的本地匹配状态。 */
+	private customMapLoadStates = new Map<string, Map<string, MapLocalCheckData["status"]>>();
+	/** 旧客户端不会回复本地匹配消息，超时后回退到原有直接分块传输。 */
+	private mapTransferFallbackTimers = new Map<string, number>();
+	/** 已确认走旧分块协议的客户端；它们不会携带地图加载会话标识。 */
+	private legacyCustomMapClients = new Map<string, string>();
 	private roomId: string;
 	private userList: Map<string, UserInRoom>;
 	private aiUserList: Map<string, UserInRoomInfo>;
@@ -733,8 +742,8 @@ export class Room {
 					}
 				}
 
-				// 发送地图信息（使用分块传输）
-				this.startMapChunkTransfer(userInRoom.userId, this.mapInfo!);
+				// 先发布自定义地图描述；旧客户端超时后回退到分块传输。
+				this.publishMapToClient(userInRoom.userId, this.mapInfo!);
 
 				// 等待地图资源加载完成
 				await this.operationListener.onceAsync(userInRoom.userId, OperateType.MapResourceLoaded);
@@ -805,8 +814,8 @@ export class Room {
 			oldUser.socketClient = newCoon;
 			this.roomInfoBroadcast();
 
-			// 发送地图信息（使用分块传输）
-			this.startMapChunkTransfer(userId, this.mapInfo!);
+			// 重连后重新发布当前地图描述或服务器地图。
+			this.publishMapToClient(userId, this.mapInfo!);
 
 			// 等待地图资源加载完成
 			try {
@@ -861,6 +870,9 @@ export class Room {
 			});
 			sendChangeMapMessage();
 		} else if ((data.from === "custom")) {
+			data.descriptor = await this.createCustomMapDescriptor(data);
+			this.customMapLoadStates.clear();
+			this.legacyCustomMapClients.clear();
 			//如果地图来源为玩家 (有风险的)
 			//需要其他玩家确定
 			const otherPlayers = Array.from(this.userList.values()).filter((user) => user.userId !== this.ownerId);
@@ -918,9 +930,11 @@ export class Room {
 
 		function sendChangeMapMessage() {
 			_this.userList.forEach((u) => (u.isReady = false));
-			// 使用分块传输发送给所有玩家（含房主，避免单条大消息被不可靠信道丢弃）
-			for (const [userId, user] of _this.userList) {
-				_this.startMapChunkTransfer(userId, data);
+			// 房间快照不能继续携带上一张地图的参数；新地图加载后由房主同步其默认值。
+			_this.gameSetting = {};
+			// 自定义地图先发送描述，由客机本地命中或按需请求分块传输。
+			for (const [userId] of _this.userList) {
+				_this.publishMapToClient(userId, data);
 			}
 			_this.roomBroadcast({
 				type: SocketMsgType.RoomInfo,
@@ -1295,16 +1309,35 @@ export class Room {
 
 	/**
 	 * 发送单个分块（二进制直传，绕过 JSON/Base64 通道）
-	 * 包格式: [1 字节 type][4 字节 chunkIndex 大端序][chunk 原始字节]
+	 * 新协议包格式: [1 字节 type][1 字节 session 长度][session UTF-8][4 字节 chunkIndex 大端序][chunk 原始字节]。
+	 * 为兼容旧客户端，回退传输仍使用旧格式: [1 字节 type][4 字节 chunkIndex 大端序][chunk 原始字节]。
 	 */
-	private sendChunk(user: UserInRoom, chunkIndex: number, chunk: Uint8Array): void {
-		const packet = new Uint8Array(5 + chunk.length);
+	private sendChunk(user: UserInRoom, mapLoadSessionId: string | undefined, chunkIndex: number, chunk: Uint8Array): void {
+		if (!mapLoadSessionId) {
+			const packet = new Uint8Array(5 + chunk.length);
+			packet[0] = MAP_CHUNK_BIN_TYPE;
+			packet[1] = (chunkIndex >>> 24) & 0xff;
+			packet[2] = (chunkIndex >>> 16) & 0xff;
+			packet[3] = (chunkIndex >>> 8) & 0xff;
+			packet[4] = chunkIndex & 0xff;
+			packet.set(chunk, 5);
+			user.socketClient.send(packet);
+			return;
+		}
+
+		const sessionBytes = new TextEncoder().encode(mapLoadSessionId);
+		if (sessionBytes.byteLength > 255) throw new Error("地图加载会话标识过长");
+		const headerSize = 6 + sessionBytes.byteLength;
+		const packet = new Uint8Array(headerSize + chunk.length);
 		packet[0] = MAP_CHUNK_BIN_TYPE;
-		packet[1] = (chunkIndex >>> 24) & 0xff;
-		packet[2] = (chunkIndex >>> 16) & 0xff;
-		packet[3] = (chunkIndex >>> 8) & 0xff;
-		packet[4] = chunkIndex & 0xff;
-		packet.set(chunk, 5);
+		packet[1] = sessionBytes.byteLength;
+		packet.set(sessionBytes, 2);
+		const indexOffset = 2 + sessionBytes.byteLength;
+		packet[indexOffset] = (chunkIndex >>> 24) & 0xff;
+		packet[indexOffset + 1] = (chunkIndex >>> 16) & 0xff;
+		packet[indexOffset + 2] = (chunkIndex >>> 8) & 0xff;
+		packet[indexOffset + 3] = chunkIndex & 0xff;
+		packet.set(chunk, headerSize);
 
 		user.socketClient.send(packet);
 	}
@@ -1315,7 +1348,91 @@ export class Room {
 	 * DataChannel 为 reliable + ordered（SCTP 层保证丢包重传与有序投递），
 	 * MapChunkEnd 必然在所有块之后到达客机端，无需应用层 ACK/重传。
 	 */
-	private startMapChunkTransfer(clientId: string, mapInfo: RoomMapInfo): void {
+	private async createCustomMapDescriptor(mapInfo: Extract<RoomMapInfo, { from: "custom" }>): Promise<CustomMapDescriptor> {
+		const raw = typeof mapInfo.data === "string" ? new Uint8Array(base64ToArrayBuffer(mapInfo.data)) : mapInfo.data;
+		const rawBuffer = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer;
+		const digest = await crypto.subtle.digest("SHA-256", rawBuffer);
+		const sha256 = `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+		const fileName = mapInfo.fileName || "自定义地图.fpmap";
+		const fileFormat = fileName.toLowerCase().endsWith(".mmmap") ? "mmmap" : "fpmap";
+		const mapName = fileName.replace(/\.(fpmap|mmmap)$/i, "") || "自定义地图";
+		return {
+			protocolVersion: 1,
+			mapLoadSessionId: crypto.randomUUID(),
+			fileSha256: sha256,
+			fileSize: raw.byteLength,
+			fileFormat,
+			fileName,
+			mapName,
+		};
+	}
+
+	private clearMapTransferFallback(clientId: string): void {
+		const timer = this.mapTransferFallbackTimers.get(clientId);
+		if (timer !== undefined) window.clearTimeout(timer);
+		this.mapTransferFallbackTimers.delete(clientId);
+	}
+
+	private publishMapToClient(clientId: string, mapInfo: RoomMapInfo): void {
+		if (mapInfo.from !== "custom" || !mapInfo.descriptor) {
+			this.startMapChunkTransfer(clientId, mapInfo);
+			return;
+		}
+		const user = this.userList.get(clientId);
+		if (!user || !user.socketClient.open) return;
+		this.clearMapTransferFallback(clientId);
+		this.sendToClient(user.socketClient, SocketMsgType.CustomMapDescriptor, mapInfo.descriptor);
+		const timer = window.setTimeout(() => {
+			const descriptor = mapInfo.descriptor!;
+			const statuses = this.customMapLoadStates.get(descriptor.mapLoadSessionId);
+			if (!statuses?.has(clientId)) {
+				this.legacyCustomMapClients.set(clientId, descriptor.mapLoadSessionId);
+				this.startMapChunkTransfer(clientId, mapInfo, true);
+			}
+		}, 2000);
+		this.mapTransferFallbackTimers.set(clientId, timer);
+	}
+
+	public handleMapLocalCheck(clientId: string, data: MapLocalCheckData): void {
+		const descriptor = this.mapInfo?.from === "custom" ? this.mapInfo.descriptor : undefined;
+		if (!descriptor || descriptor.mapLoadSessionId !== data.mapLoadSessionId || descriptor.fileSha256 !== data.fileSha256) return;
+		let statuses = this.customMapLoadStates.get(data.mapLoadSessionId);
+		if (!statuses) {
+			statuses = new Map();
+			this.customMapLoadStates.set(data.mapLoadSessionId, statuses);
+		}
+		statuses.set(clientId, data.status);
+		this.legacyCustomMapClients.delete(clientId);
+		this.clearMapTransferFallback(clientId);
+	}
+
+	public handleMapTransferRequest(clientId: string, data: MapTransferRequestData): void {
+		const mapInfo = this.mapInfo;
+		if (
+			mapInfo?.from !== "custom"
+			|| !mapInfo.descriptor
+			|| mapInfo.descriptor.mapLoadSessionId !== data.mapLoadSessionId
+			|| mapInfo.descriptor.fileSha256 !== data.fileSha256
+		) return;
+		this.legacyCustomMapClients.delete(clientId);
+		this.clearMapTransferFallback(clientId);
+		this.startMapChunkTransfer(clientId, mapInfo);
+	}
+
+	public handleMapResourceLoaded(clientId: string, mapLoadSessionId: unknown, extra: import("@src/interfaces/worker").InitOperationMeta | undefined): boolean {
+		const descriptor = this.mapInfo?.from === "custom" ? this.mapInfo.descriptor : undefined;
+		const legacySessionId = this.legacyCustomMapClients.get(clientId);
+		if (
+			descriptor
+			&& mapLoadSessionId !== descriptor.mapLoadSessionId
+			&& (mapLoadSessionId !== undefined || legacySessionId !== descriptor.mapLoadSessionId)
+		) return false;
+		this.legacyCustomMapClients.delete(clientId);
+		this.emitOperation(clientId, OperateType.MapResourceLoaded, undefined, extra);
+		return true;
+	}
+
+	private startMapChunkTransfer(clientId: string, mapInfo: RoomMapInfo, useLegacyProtocol = false): void {
 		// 只对自定义地图进行分块传输
 		if (mapInfo.from !== "custom") {
 			// 服务器地图直接发送原消息
@@ -1335,12 +1452,14 @@ export class Room {
 		const mapData = mapInfo.data;
 		const raw = typeof mapData === "string" ? new Uint8Array(base64ToArrayBuffer(mapData)) : mapData;
 		const chunks = this.splitIntoChunks(raw, this.CHUNK_SIZE);
+		const mapLoadSessionId = useLegacyProtocol ? undefined : mapInfo.descriptor?.mapLoadSessionId;
 
 		// 发送 MapChunkStart（附带动态整体超时与总大小，供客机端兜底/展示进度）
 		this.sendToClient(
 			user.socketClient,
 			SocketMsgType.MapChunkStart,
 			{
+				mapLoadSessionId,
 				totalChunks: chunks.length,
 				chunkSize: this.CHUNK_SIZE,
 				mapInfo: { from: "custom" as const },
@@ -1351,14 +1470,14 @@ export class Room {
 
 		// 流水线：按序发送所有块
 		for (let i = 0; i < chunks.length; i++) {
-			this.sendChunk(user, i, chunks[i]);
+			this.sendChunk(user, mapLoadSessionId, i, chunks[i]);
 		}
 
 		// MapChunkEnd 在所有块之后发送，DataChannel 有序投递保证其最后到达
 		this.sendToClient(
 			user.socketClient,
 			SocketMsgType.MapChunkEnd,
-			{ success: true },
+			{ success: true, mapLoadSessionId },
 		);
 		console.log(`[MapTransfer] Sent ${chunks.length} chunks to client ${clientId}`);
 	}
@@ -2446,6 +2565,7 @@ export class Room {
 			case SocketMsgType.ButtonRegister:
 			case SocketMsgType.ButtonStateChanged:
 			case SocketMsgType.ButtonRemove:
+			case SocketMsgType.MapPathChoiceRequest:
 				return true;
 			default:
 				return false;

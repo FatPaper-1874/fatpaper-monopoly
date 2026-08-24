@@ -6,7 +6,7 @@
  */
 
 // Re-export all services
-export { mapContentService } from "./map-content-service";
+export { CodeValidationError, mapContentService } from "./map-content-service";
 
 // Re-export all validators
 export * from "./validators/index";

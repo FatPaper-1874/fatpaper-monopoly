@@ -55,6 +55,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	getMapCacheStat: () => ipcRenderer.invoke("map-cache:stat"),
 	clearMapCache: () => ipcRenderer.invoke("map-cache:clear"),
 	openMapCacheFolder: () => ipcRenderer.invoke("map-cache:open-folder"),
+	// 本地地图仓库：主进程始终限制在 game-map 根目录中。
+	importLocalMap: () => ipcRenderer.invoke("local-map:import"),
+	scanLocalMaps: () => ipcRenderer.invoke("local-map:scan"),
+	findLocalMapByHash: (input: { sha256: string; size: number }) => ipcRenderer.invoke("local-map:find-by-hash", input),
+	saveReceivedLocalMap: (input: { sha256: string; format: "fpmap" | "mmmap"; fileName?: string; data: ArrayBuffer }) =>
+		ipcRenderer.invoke("local-map:save-received", input),
+	openLocalMapDirectory: () => ipcRenderer.invoke("local-map:open-folder"),
+	getLocalMapDirectoryStatus: () => ipcRenderer.invoke("local-map:status"),
 	// Inspector (dev only) — only exposed in dev mode
 	...(process.env.VITE_DEV_SERVER_URL ? { openInspector: () => ipcRenderer.invoke("open-inspector") } : {}),
 });

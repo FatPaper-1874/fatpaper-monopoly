@@ -11,9 +11,10 @@ import {
 	PropertyInfo,
 	GameMap,
 	DiceResult,
+	MapMovementSegment,
 } from "@mine-monopoly/types";
 import { useChat, useDeviceStatus, useLoading, useSettig, useUserInfo, useUtil } from "@src/store";
-import { Component, ComponentPublicInstance, createApp, toRaw, watch, WatchStopHandle } from "vue";
+import { Component, ComponentPublicInstance, createApp, watch, WatchStopHandle } from "vue";
 import { loadItemTypeModules } from "@src/utils/three/itemtype-loader";
 import { useMonopolyClient } from "@src/core/monopoly-client/MonopolyClient";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer";
@@ -46,6 +47,7 @@ import { type GameInitStage, wrapGameInitError } from "@src/utils/game-init-diag
 import { clone } from "lodash";
 import { getDracoLoader } from "@src/utils/draco/draco";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
+import { MapPathChoiceSceneController, setMapPathChoiceArrowFactory } from "./MapPathChoiceSceneController";
 
 const PLAY_MODEL_SIZE = 0.7;
 const loadingMask = useLoading();
@@ -95,14 +97,18 @@ export class GameRenderer {
 	private chanceCardTargetOutlinePass: OutlinePass;
 	private playerInRoundOutlinePass: OutlinePass;
 	private controls: OrbitControls;
+	private pathChoiceController!: MapPathChoiceSceneController;
 	private isLowEnd: boolean;
 
 	private mapContainer: THREE.Group = new THREE.Group();
-	private mapModules: Map<string, {
-		scene: THREE.Group;
-		gltf: any;
-		hasAnimations: boolean;
-	}> = new Map();
+	private mapModules: Map<
+		string,
+		{
+			scene: THREE.Group;
+			gltf: any;
+			hasAnimations: boolean;
+		}
+	> = new Map();
 	private mapItemsInScene: Map<string, THREE.Group> = new Map<string, THREE.Group>();
 
 	private playerEntities: Map<string, PlayerModel> = new Map<string, PlayerModel>();
@@ -112,7 +118,7 @@ export class GameRenderer {
 		{ group: THREE.Group; textSprite: TextSprite }
 	>();
 	private arrivedEventIcons: Map<string, THREE.Mesh> = new Map<string, THREE.Mesh>(); // key = mapItemId
-	private playerPosition: Map<string, number> = new Map<string, number>();
+	private playerPosition: Map<string, string> = new Map<string, string>();
 	private playerPendingWalks: Map<string, string> = new Map<string, string>(); // 防止同一玩家的走路动画并发执行
 	private requestAnimationFrameId: number = -1;
 
@@ -217,21 +223,19 @@ export class GameRenderer {
 				const gammaPass = new ShaderPass(GammaCorrectionShader);
 				this.composer.addPass(gammaPass);
 
-				const {
-					css2DObject: propertyCSS2DObject,
-					appInstance: propertyInfoLabelInstance,
-				} = createCSS2DObjectFromVue(PropertyInfoCard, {
-					property: null,
-				});
+				const { css2DObject: propertyCSS2DObject, appInstance: propertyInfoLabelInstance } = createCSS2DObjectFromVue(
+					PropertyInfoCard,
+					{
+						property: null,
+					},
+				);
 				this.propertyInfoLabel = propertyCSS2DObject;
 				this.propertyInfoLabelInstance = propertyInfoLabelInstance;
 
-				const {
-					css2DObject: arrivedEventCSS2DObject,
-					appInstance: arrivedEventLabelInstance,
-				} = createCSS2DObjectFromVue(MapEventCard, {
-					property: null,
-				});
+				const { css2DObject: arrivedEventCSS2DObject, appInstance: arrivedEventLabelInstance } =
+					createCSS2DObjectFromVue(MapEventCard, {
+						property: null,
+					});
 				this.arrivedEventInfoLabel = arrivedEventCSS2DObject;
 				this.arrivedEventInfoLabelInstance = arrivedEventLabelInstance;
 
@@ -255,6 +259,15 @@ export class GameRenderer {
 				controls.minPolarAngle = Math.PI / 3;
 				controls.update();
 				this.controls = controls;
+				this.pathChoiceController = new MapPathChoiceSceneController({
+					scene: this.scene,
+					camera: this.camera,
+					controls: this.controls,
+					canvas: this.canvas,
+					getMapItemAnchor: (mapItemId) => this.getMapPathChoiceAnchor(mapItemId),
+					getMapItemFootprintRadius: (mapItemId, direction) => this.getMapPathChoiceFootprintRadius(mapItemId, direction),
+					getMapItemLabel: (mapItemId) => this.getMapPathChoiceLabel(mapItemId),
+				});
 
 				const handleResize = () => {
 					this.camera.aspect = container.clientWidth / container.clientHeight; //相机视角长宽比
@@ -297,6 +310,7 @@ export class GameRenderer {
 
 		loadingMask.text = "正在进行初始化加载：机会卡、场景设置";
 		await this.runInitStage("chance-card-assets", () => this.initChanceCard());
+		await this.initMapPathChoiceArrowModel();
 		await this.runInitStage("scene-effects", async () => {
 			this.initLight();
 			this.initOutlinePass();
@@ -304,6 +318,7 @@ export class GameRenderer {
 		});
 
 		this.focusMe();
+		this.pathChoiceController.setRequest(useGameData().mapPathChoiceRequest);
 
 		const userInfoStore = useUserInfo();
 
@@ -363,11 +378,21 @@ export class GameRenderer {
 
 				this.handlePropertyRaycaster(propertyRaycaster, pointer);
 				this.handleMapEventRaycaster(propertyRaycaster, pointer);
+				this.pathChoiceController.update();
 
-				if (this.isLockingRole && this.isLockingRoleFromSetting && this.currentFocusModule) {
-					this.updateCamera(this.controls, this.currentFocusModule, 7, 30);
+				if (
+					!this.pathChoiceController.isActive &&
+					!this.pathChoiceController.isCameraTransitioning &&
+					this.isLockingRole &&
+					this.isLockingRoleFromSetting &&
+					this.currentFocusModule
+				) {
+					// 持续跟随必须在单帧内完成；在渲染循环里创建 GSAP tween 会导致多个 tween 同时争抢相机状态。
+					this.followCamera(this.controls, this.currentFocusModule, 7, 30, delta);
 				}
-				this.controls.update(100);
+				if (!this.pathChoiceController.isCameraTransitioning) {
+					this.controls.update(delta);
+				}
 
 				Array.from(this.playerEntities.values()).forEach((player) => {
 					player.update(this.camera);
@@ -412,6 +437,19 @@ export class GameRenderer {
 		}
 	}
 
+	private async initMapPathChoiceArrowModel() {
+		try {
+			const arrowTemplate = (await loadModel("arrow.glb")).scene;
+			setMapPathChoiceArrowFactory(() => {
+				const arrow = arrowTemplate.clone(true);
+				arrow.scale.setScalar(0.4); // 小一点；1 为模型原始大小
+				return arrow;
+			});
+		} catch (error) {
+			console.warn("[渲染器] 分叉选路箭头模型加载失败，将使用默认箭头。", error);
+		}
+	}
+
 	private async initDiceManager() {
 		const diceModel = (await loadModel("dice.glb")).scene;
 		diceModel.scale.set(0.8, 0.8, 0.8);
@@ -448,7 +486,7 @@ export class GameRenderer {
 			this.mapModules.set(modelResource.id, {
 				scene: model,
 				gltf: gltf,
-				hasAnimations: gltf.animations && gltf.animations.length > 0
+				hasAnimations: gltf.animations && gltf.animations.length > 0,
 			});
 		}
 	}
@@ -475,7 +513,7 @@ export class GameRenderer {
 					const instanceId = `${mapItem.type.modelId}_${mapItem.id}`;
 					this.animationManager.registerModel(instanceId, modelData.gltf, mapItemModel, {
 						autoPlay: true,
-						loop: THREE.LoopRepeat
+						loop: THREE.LoopRepeat,
 					});
 				}
 			} else {
@@ -1202,13 +1240,27 @@ export class GameRenderer {
 			),
 		);
 
+		this.commonWatchers.push(
+			watch(
+				() => useGameData().mapPathChoiceRequest,
+				(request) => this.pathChoiceController.setRequest(request),
+			),
+		);
+
 		useEventBus().on("player-isThinking", (playerId: string, _oldValue: boolean, newValue: boolean) => {
 			this.syncPlayerThinkingMarker(playerId, Boolean(newValue));
 		});
 
 		useEventBus().on(
 			"player-walk",
-			async (walkPlayerId: string, step: number, walkId: string, totalSteps?: number, startStep?: number) => {
+			async (
+				walkPlayerId: string,
+				step: number,
+				walkId: string,
+				totalSteps?: number,
+				startStep?: number,
+				segment?: MapMovementSegment,
+			) => {
 				// 等待前一个动画完成，防止并发执行
 				const pendingWalk = this.playerPendingWalks.get(walkPlayerId);
 				if (pendingWalk) {
@@ -1232,15 +1284,8 @@ export class GameRenderer {
 
 				const playerEntity = this.playerEntities.get(walkPlayerId);
 				if (playerEntity) {
-					const sourcePosition = toRaw(this.playerPosition.get(walkPlayerId)) as number;
-					const mapIndexLength = toRaw(mapDataStore.mapIndex.length);
-					const endIndex = (((sourcePosition + step) % mapIndexLength) + mapIndexLength) % mapIndexLength;
-
 					const model = this.playerEntities.get(walkPlayerId)?.model;
-					if (model) {
-						this.currentFocusModule = model;
-						// this.playerInRoundOutlinePass.selectedObjects = [model];
-					}
+					if (model) this.currentFocusModule = model;
 					this.isLockingRole = true;
 					gsap.to(playerEntity.model.scale, {
 						x: Math.sign(playerEntity.model.scale.x),
@@ -1249,23 +1294,39 @@ export class GameRenderer {
 					});
 
 					try {
-						await this.updatePlayerPositionByStep(
-							walkPlayerId,
-							sourcePosition,
-							step,
-							mapIndexLength,
-							totalSteps ?? Math.abs(step), // 向后兼容：如果没有提供 totalSteps，使用当前步数
-							startStep ?? 1, // 向后兼容：如果没有提供 startStep，从第1步开始
-						);
+						if (segment) {
+							await this.updatePlayerPositionBySegment(walkPlayerId, segment, totalSteps, startStep);
+							this.playerPosition.set(walkPlayerId, segment.toMapItemId);
+						} else {
+							const sourcePosition = this.getLegacyPositionIndex(walkPlayerId);
+							const mapIndexLength = mapDataStore.mapIndex.length;
+							if (sourcePosition === undefined || mapIndexLength <= 0) {
+								console.warn(`[渲染器] 无法解析旧版走路起点: ${walkPlayerId}`);
+							} else {
+								const endIndex = (((sourcePosition + step) % mapIndexLength) + mapIndexLength) % mapIndexLength;
+								await this.updatePlayerPositionByStep(
+									walkPlayerId,
+									sourcePosition,
+									step,
+									mapIndexLength,
+									totalSteps ?? Math.abs(step),
+									startStep ?? 1,
+								);
+								const endMapItemId = this.getMapItemIdByIndex(endIndex);
+								if (endMapItemId) this.playerPosition.set(walkPlayerId, endMapItemId);
+							}
+						}
+					} catch (error) {
+						console.error(`[渲染器] 玩家移动动画失败: ${walkPlayerId}`, error);
 					} finally {
 						this.playerPendingWalks.delete(walkPlayerId);
 					}
 
 					this.currentFocusModule = null;
 					this.isLockingRole = false;
-
-					// 更新 playerPosition Map，确保下一段走路从正确位置开始
-					this.playerPosition.set(walkPlayerId, endIndex);
+					if (!this.pathChoiceController.isActive && !this.pathChoiceController.isCameraTransitioning) {
+						this.controls.enabled = true;
+					}
 
 					// 拆散重叠的玩家模型
 					this.breakUpPlayersInSameMapItem();
@@ -1274,51 +1335,58 @@ export class GameRenderer {
 				}
 			},
 		);
-		useEventBus().on("player-tp", async (tpPlayerId: string, positionIndex: number, walkId: string) => {
-			const playerEntity = this.getPlayerEntity(tpPlayerId);
+		useEventBus().on(
+			"player-tp",
+			async (tpPlayerId: string, positionIndex: number, walkId: string, mapItemId?: string) => {
+				const playerEntity = this.getPlayerEntity(tpPlayerId);
 
-			if (playerEntity) {
-				const model = playerEntity.model;
-				const body = playerEntity.bodyMesh; // 获取 bodyMesh
+				if (playerEntity) {
+					const model = playerEntity.model;
+					const body = playerEntity.bodyMesh; // 获取 bodyMesh
 
-				this.currentFocusModule = model;
-				this.isLockingRole = true;
+					this.currentFocusModule = model;
+					this.isLockingRole = true;
 
-				if (!body) return;
-				// 1. 记录原始朝向
-				const originalDir = Math.sign(body.scale.x) || 1;
+					if (!body) return;
+					// 1. 记录原始朝向
+					const originalDir = Math.sign(body.scale.x) || 1;
 
-				// 2. 消失动画
-				await gsap.to(body.scale, {
-					x: 0,
-					duration: 0.5,
-					ease: "back.in(1.7)",
-				});
+					// 2. 消失动画
+					await gsap.to(body.scale, {
+						x: 0,
+						duration: 0.5,
+						ease: "back.in(1.7)",
+					});
 
-				// 3. 执行位移 (瞬间) - 修复高度问题
-				const mapItem = this.getMapItem(positionIndex);
-				if (mapItem) {
-					const { x, z } = mapItem.position;
-					const surfaceY = this.getMapItemSurfaceHeight(mapItem);
-					model.position.set(x, surfaceY, z);
+					// 3. 执行位移 (瞬间) - 修复高度问题
+					const resolvedMapItemId = mapItemId ?? this.getMapItemIdByIndex(positionIndex);
+					const mapItem = mapItemId ? this.getMapItemById(mapItemId) : this.getMapItem(positionIndex);
+					if (mapItem) {
+						const { x, z } = mapItem.position;
+						const surfaceY = this.getMapItemSurfaceHeight(mapItem);
+						model.position.set(x, surfaceY, z);
+					}
+					if (resolvedMapItemId) this.playerPosition.set(tpPlayerId, resolvedMapItemId);
+
+					// 4. 出现动画
+					await gsap.to(body.scale, {
+						x: originalDir,
+						duration: 0.5,
+						delay: 0.1,
+						ease: "back.out(1.7)",
+					});
+
+					this.currentFocusModule = null;
+					this.isLockingRole = false;
+					if (!this.pathChoiceController.isActive && !this.pathChoiceController.isCameraTransitioning) {
+						this.controls.enabled = true;
+					}
+					this.breakUpPlayersInSameMapItem();
+					const monopolyClient = useMonopolyClient();
+					monopolyClient && monopolyClient.AnimationComplete(walkId);
 				}
-				this.playerPosition.set(tpPlayerId, positionIndex);
-
-				// 4. 出现动画
-				await gsap.to(body.scale, {
-					x: originalDir,
-					duration: 0.5,
-					delay: 0.1,
-					ease: "back.out(1.7)",
-				});
-
-				this.currentFocusModule = null;
-				this.isLockingRole = false;
-				this.breakUpPlayersInSameMapItem();
-				const monopolyClient = useMonopolyClient();
-				monopolyClient && monopolyClient.AnimationComplete(walkId);
-			}
-		});
+			},
+		);
 
 		useEventBus().on("player-money", async (playerId: string, oldMoney: number, newMoney: number) => {
 			const moneyDiff = newMoney - oldMoney;
@@ -1453,9 +1521,10 @@ export class GameRenderer {
 		this.commonWatchers.forEach((f) => f());
 		this.clearAllSpeechBubbles();
 		this.clearAllThinkingMarkers();
-			this.diceManager && this.diceManager.dispose();
-			// 释放动画管理器
-			this.animationManager.dispose();
+		this.pathChoiceController?.dispose();
+		this.diceManager && this.diceManager.dispose();
+		// 释放动画管理器
+		this.animationManager.dispose();
 		this.scene.traverse((object) => {
 			if (object instanceof THREE.Mesh) {
 				object.geometry?.dispose();
@@ -1510,7 +1579,10 @@ export class GameRenderer {
 	private async loadPlayersModules(playerList: Array<PlayerInfo>) {
 		for await (const playerInfo of playerList) {
 			try {
-				this.playerPosition.set(playerInfo.id, toRaw(playerInfo.positionIndex));
+				const mapItemId = this.resolvePlayerMapItemId(playerInfo);
+				if (mapItemId) {
+					this.playerPosition.set(playerInfo.id, mapItemId);
+				}
 				const role = useMapData().getRoleById(playerInfo.user.roleId);
 				if (!role) throw Error("初始化玩家模型时: 找不到角色信息");
 				const modelResource = useResourceStore().getRecourceById(role.imageId);
@@ -1538,6 +1610,37 @@ export class GameRenderer {
 		}
 	}
 
+	/**
+	 * 持续跟随角色。该方法由 render loop 调用，因此只能直接更新当前帧状态，
+	 * 不能创建 GSAP tween，否则每帧都会累积多个相机动画并产生抖动。
+	 */
+	private followCamera(
+		controls: OrbitControls,
+		targetObject: THREE.Object3D,
+		followDistance: number,
+		followAngleY: number,
+		delta: number,
+	) {
+		controls.enabled = false;
+		const targetPos = targetObject.position;
+		const cameraFaceVector = controls.object.getWorldDirection(new THREE.Vector3());
+		if (Math.abs(cameraFaceVector.x) + Math.abs(cameraFaceVector.z) < 0.000001) return;
+
+		// 保持原有的水平取景距离计算，只替换 tween 驱动方式，避免改变既有镜头构图。
+		const coefficient = followDistance / cameraFaceVector.length();
+		const followPos = targetPos.clone();
+		followPos.x -= cameraFaceVector.x * coefficient;
+		followPos.y = targetPos.y + followDistance * Math.tan(THREE.MathUtils.degToRad(followAngleY));
+		followPos.z -= cameraFaceVector.z * coefficient;
+
+		const alpha = 1 - Math.exp(-10 * delta);
+		controls.target.lerp(targetPos, alpha);
+		controls.object.position.lerp(followPos, alpha);
+	}
+
+	/**
+	 * 一次性聚焦（例如点击“回归视角”）。只允许保留一个显式相机 tween。
+	 */
 	private updateCamera(
 		controls: OrbitControls,
 		targetObject: THREE.Object3D,
@@ -1547,31 +1650,28 @@ export class GameRenderer {
 		if (!targetObject) return;
 		controls.enabled = false;
 		const targetPos = targetObject.position;
-		const followPos = new THREE.Vector3();
 		const cameraFaceVector = controls.object.getWorldDirection(new THREE.Vector3());
-		const coefficient = followDistance / cameraFaceVector.length();
-		const v1 = new THREE.Vector2(targetPos.x, targetPos.z);
-		const v2 = v1.add(new THREE.Vector2(cameraFaceVector.x, cameraFaceVector.z).multiplyScalar(coefficient).negate());
+		if (Math.abs(cameraFaceVector.x) + Math.abs(cameraFaceVector.z) < 0.000001) return;
 
-		followPos.x = v2.x;
+		// 保持原有的水平取景距离计算，只替换 tween 驱动方式，避免改变既有镜头构图。
+		const coefficient = followDistance / cameraFaceVector.length();
+		const followPos = targetPos.clone();
+		followPos.x -= cameraFaceVector.x * coefficient;
 		followPos.y = targetPos.y + followDistance * Math.tan(THREE.MathUtils.degToRad(followAngleY));
-		followPos.z = v2.y;
-		// controls.target.copy(targetPos);
-		gsap.to(controls.target, {
-			x: targetPos.x,
-			y: targetPos.y,
-			z: targetPos.z,
-			duration: 0.5,
-		});
-		gsap.to(controls.object.position, {
-			x: followPos.x,
-			y: followPos.y,
-			z: followPos.z,
-			duration: 0.5,
+		followPos.z -= cameraFaceVector.z * coefficient;
+
+		gsap.killTweensOf([controls.target, controls.object.position]);
+		const timeline = gsap.timeline({
 			onComplete: () => {
 				controls.enabled = true;
 			},
 		});
+		timeline.to(controls.target, { x: targetPos.x, y: targetPos.y, z: targetPos.z, duration: 0.5, ease: "power2.out" }, 0);
+		timeline.to(
+			controls.object.position,
+			{ x: followPos.x, y: followPos.y, z: followPos.z, duration: 0.5, ease: "power2.out" },
+			0,
+		);
 	}
 
 	private outlineModels(models: THREE.Object3D[]) {
@@ -1679,6 +1779,91 @@ export class GameRenderer {
 		});
 	}
 
+	private async updatePlayerPositionBySegment(
+		playerId: string,
+		segment: MapMovementSegment,
+		totalSteps?: number,
+		startStep?: number,
+	) {
+		const playerEntity = this.playerEntities.get(playerId);
+		if (!playerEntity) return;
+
+		const fromMapItem = this.getMapItemById(segment.fromMapItemId);
+		const toMapItem = this.getMapItemById(segment.toMapItemId);
+		if (!toMapItem) {
+			console.warn(`[渲染器] MapPath V2 移动目标不存在: ${segment.toMapItemId} (${segment.direction})`);
+			return;
+		}
+
+		const playerModel = playerEntity.model;
+		const playerBody = playerEntity.bodyMesh;
+		if (fromMapItem) {
+			const { x, z } = fromMapItem.position;
+			playerModel.position.set(x, this.getMapItemSurfaceHeight(fromMapItem), z);
+		} else {
+			console.warn(`[渲染器] MapPath V2 移动起点不存在: ${segment.fromMapItemId} (${segment.direction})`);
+		}
+
+		const { x: targetX, z: targetZ } = toMapItem.position;
+		const targetY = this.getMapItemSurfaceHeight(toMapItem);
+		if (!useDeviceStatus().isFocus) {
+			playerModel.position.set(targetX, targetY, targetZ);
+			return;
+		}
+
+		const actualTotalSteps = totalSteps ?? 1;
+		const actualStartStep = startStep ?? 1;
+		const initialRemaining = Math.max(0, actualTotalSteps - actualStartStep + 1);
+		const stepTextSprite = new TextSprite(initialRemaining.toString(), 64, "#ffb84d", 8, 0);
+		const stepMesh = stepTextSprite.getSprite();
+		stepMesh.position.set(0.5, PLAY_MODEL_SIZE - 0.3, 0);
+		stepMesh.scale.set(3, 3, 3);
+		stepMesh.renderOrder = 9999999;
+		playerBody?.add(stepMesh);
+
+		try {
+			useAudioManager().playSound(SoundName.PLAYER_STEP);
+			const animation = gsap.timeline();
+			if (playerBody) {
+				const fromScreenX = getScreenPosition(fromMapItem ?? playerModel, this.camera).x;
+				const toScreenX = getScreenPosition(toMapItem, this.camera).x;
+				const targetDir =
+					toScreenX > fromScreenX ? 1 : toScreenX < fromScreenX ? -1 : Math.sign(playerBody.scale.x) || 1;
+				animation.to(playerBody.scale, { x: targetDir, duration: 0.1 }, 0);
+				animation.to(
+					playerBody.scale,
+					{
+						y: 0.98,
+						duration: 0.08,
+						ease: "power2.in",
+						onComplete: () => stepTextSprite.updateText(Math.max(0, initialRemaining - 1).toString()),
+					},
+					0.175,
+				);
+				animation.to(playerBody.scale, { y: 1, duration: 0.08, ease: "sine.out" }, 0.27);
+			}
+			animation.to(
+				playerModel.position,
+				{
+					x: targetX,
+					y: targetY,
+					z: targetZ,
+					duration: 0.35,
+					ease: "power2.inOut",
+				},
+				0,
+			);
+			await animation;
+		} finally {
+			playerBody?.remove(stepMesh);
+			stepMesh.geometry.dispose();
+			if (Array.isArray(stepMesh.material)) {
+				stepMesh.material.forEach((material) => material.dispose());
+			} else {
+				stepMesh.material.dispose();
+			}
+		}
+	}
 	private async updatePlayerPositionByStep(
 		playerId: string,
 		sourceIndex: number,
@@ -1722,7 +1907,7 @@ export class GameRenderer {
 					const nextMapItem = this.getMapItem((((sourceIndex + Math.sign(stepNum) * i) % total) + total) % total);
 
 					if (nextMapItem) {
-					// 播放走路音效
+						// 播放走路音效
 						useAudioManager().playSound(SoundName.PLAYER_STEP);
 
 						let currentAnimation: gsap.core.Timeline | null = null;
@@ -1736,7 +1921,12 @@ export class GameRenderer {
 							if (playerBody) {
 								const { x: nextMapItemScreenX } = getScreenPosition(nextMapItem, this.camera);
 								const { x: playerScreenX } = getScreenPosition(playerModule, this.camera);
-								const targetDir = nextMapItemScreenX > playerScreenX ? 1 : nextMapItemScreenX < playerScreenX ? -1 : Math.sign(playerBody.scale.x);
+								const targetDir =
+									nextMapItemScreenX > playerScreenX
+										? 1
+										: nextMapItemScreenX < playerScreenX
+											? -1
+											: Math.sign(playerBody.scale.x);
 								playerBody.scale.set(targetDir, 1, 1);
 
 								const remaining = actualTotalSteps - (actualStartStep + i);
@@ -1929,33 +2119,81 @@ export class GameRenderer {
 	}
 
 	private updatePlayerPosition(playerInfo: PlayerInfo) {
-		const mapItem = this.getMapItem(playerInfo.positionIndex);
-		if (!mapItem) return;
+		const mapItemId = this.resolvePlayerMapItemId(playerInfo);
+		const mapItem = this.getMapItemById(mapItemId);
+		if (!mapItem) {
+			if (mapItemId) console.warn(`[渲染器] 未找到玩家初始位置地图项: ${mapItemId}`);
+			return;
+		}
 
-		const surfaceY = this.getMapItemSurfaceHeight(mapItem);
-		const { x, z } = mapItem.position;
-
+		this.playerPosition.set(playerInfo.id, mapItemId!);
 		const player = this.playerEntities.get(playerInfo.id);
 		if (!player) return;
-		// 使用动态高度
-		player.model.position.set(x, surfaceY, z);
+		const { x, z } = mapItem.position;
+		player.model.position.set(x, this.getMapItemSurfaceHeight(mapItem), z);
+	}
+
+	private getMapPathChoiceAnchor(mapItemId: string): THREE.Vector3 | undefined {
+		const mapItem = this.getMapItemById(mapItemId);
+		if (!mapItem) return undefined;
+		const anchor = mapItem.getWorldPosition(new THREE.Vector3());
+		anchor.y = this.getMapItemSurfaceHeight(mapItem);
+		return anchor;
+	}
+
+	private getMapPathChoiceFootprintRadius(mapItemId: string, direction: THREE.Vector3): number {
+		const mapItem = this.getMapItemById(mapItemId);
+		if (!mapItem) return 0.6;
+
+		const box = new THREE.Box3().setFromObject(mapItem);
+		if (box.isEmpty()) return 0.6;
+		const size = box.getSize(new THREE.Vector3());
+		// 计算模型外接矩形在分支方向上的半径，使箭头紧贴模型外围而不是固定偏移。
+		return Math.max(0.35, Math.abs(direction.x) * size.x * 0.5 + Math.abs(direction.z) * size.z * 0.5);
+	}
+
+	private getMapPathChoiceLabel(mapItemId: string): string {
+		const mapItem = this.mapData.mapItems.find((item) => item.id === mapItemId);
+		if (!mapItem) return mapItemId;
+		const mapEvent = mapItem.mapEventId
+			? this.mapData.mapEvents.find((event) => event.id === mapItem.mapEventId)
+			: undefined;
+		return mapItem.property?.name || mapEvent?.name || mapItem.type.name || mapItem.id;
+	}
+
+	private getMapItemIdByIndex(index: number | undefined): string | undefined {
+		if (index === undefined || !Number.isInteger(index)) return undefined;
+		return useMapData().mapIndex[index];
+	}
+
+	private getMapItemById(mapItemId: string | undefined): THREE.Group | undefined {
+		return mapItemId ? this.mapItemsInScene.get(mapItemId) : undefined;
+	}
+
+	private resolvePlayerMapItemId(playerInfo: PlayerInfo): string | undefined {
+		return playerInfo.positionMapItemId || this.getMapItemIdByIndex(playerInfo.positionIndex);
+	}
+
+	private getLegacyPositionIndex(playerId: string): number | undefined {
+		const mapItemId = this.playerPosition.get(playerId);
+		if (mapItemId) {
+			const index = useMapData().mapIndex.indexOf(mapItemId);
+			if (index >= 0) return index;
+		}
+		return useGameData().players.find((player) => player.id === playerId)?.positionIndex;
 	}
 
 	private getMapItemPosition(index: number) {
-		const mapIndex = useMapData().mapIndex;
-		const id = mapIndex[index];
-		if (!this.mapItemsInScene.has(id)) return new THREE.Vector3(0, 0, 0);
-		return this.mapItemsInScene.get(id)!.position;
+		return this.getMapItem(index)?.position ?? new THREE.Vector3(0, 0, 0);
 	}
 
 	private getPlayerEntity(id: string) {
 		return this.playerEntities.get(id);
 	}
 
+	/** 旧 positionIndex/mapIndex 协议的兼容回退。 */
 	private getMapItem(index: number) {
-		const mapIndex = useMapData().mapIndex;
-		const id = mapIndex[index];
-		return this.mapItemsInScene.get(id);
+		return this.getMapItemById(this.getMapItemIdByIndex(index));
 	}
 
 	/**
@@ -2085,7 +2323,10 @@ export class GameRenderer {
 	 * @param mapItemId 地块 ID
 	 * @param mapEvent 事件对象，传 null 清除
 	 */
-	public setMapItemEventUserData(mapItemId: string, mapEvent: { id: string; name: string; description: string } | null): void {
+	public setMapItemEventUserData(
+		mapItemId: string,
+		mapEvent: { id: string; name: string; description: string } | null,
+	): void {
 		const mapItemModel = this.mapItemsInScene.get(mapItemId);
 		if (!mapItemModel) return;
 		if (mapEvent) {
@@ -2096,73 +2337,47 @@ export class GameRenderer {
 	}
 
 	private breakUpPlayersInSameMapItem() {
-		// 使用内部 playerPosition Map 而不是 GameData
-		// 因为在走路动画完成后，GameData 还没有更新，会导致位置被重置为旧值
-		const playersList = useGameData().players;
+		// 动画可能先于 GameData 同步；以渲染缓存的 mapItemId 为准，缺失时才回退玩家状态。
+		const groups = new Map<string, PlayerInfo[]>();
+		for (const player of useGameData().players) {
+			const mapItemId = this.playerPosition.get(player.id) ?? this.resolvePlayerMapItemId(player);
+			if (!mapItemId) continue;
+			const players = groups.get(mapItemId) ?? [];
+			players.push(player);
+			groups.set(mapItemId, players);
+		}
 
-		// 使用 playerPosition Map 获取玩家实际位置
-		const positionMap = new Map<string, number>();
-		this.playerPosition.forEach((pos, playerId) => {
-			positionMap.set(playerId, pos);
-		});
-
-		groupByPositionIndex(playersList, positionMap).forEach(({ players, positionIndex }) => {
-			const mapItem = this.getMapItem(positionIndex);
-			if (!mapItem) return;
-
+		for (const [mapItemId, players] of groups) {
+			const mapItem = this.getMapItemById(mapItemId);
+			if (!mapItem) {
+				console.warn(`[渲染器] 无法叠放玩家，地图项不存在: ${mapItemId}`);
+				continue;
+			}
 			const { x, z } = mapItem.position;
 			const surfaceY = this.getMapItemSurfaceHeight(mapItem);
-
 			if (players.length > 1) {
-				const offsetArr = generateCirclePointsOffset(x, z, 0.5, players.length);
-				offsetArr.forEach((offset, index) => {
+				const offsets = generateCirclePointsOffset(x, z, 0.5, players.length);
+				offsets.forEach((offset, index) => {
 					const playerEntity = this.getPlayerEntity(players[index].id);
-					if (playerEntity) {
-						playerEntity.model.position.x = x + offset.offsetX;
-						playerEntity.model.position.z = z + offset.offsetY;
-						playerEntity.model.position.y = surfaceY;
-
-						const scale = 1 - 1 / players.length;
-
-						gsap.to(playerEntity.model.scale, {
-							x: Math.sign(playerEntity.model.scale.x) * scale,
-							y: Math.sign(playerEntity.model.scale.y) * scale,
-							z: Math.sign(playerEntity.model.scale.z) * scale,
-						});
-					}
+					if (!playerEntity) return;
+					playerEntity.model.position.set(x + offset.offsetX, surfaceY, z + offset.offsetY);
+					const scale = 1 - 1 / players.length;
+					gsap.to(playerEntity.model.scale, {
+						x: Math.sign(playerEntity.model.scale.x) * scale,
+						y: Math.sign(playerEntity.model.scale.y) * scale,
+						z: Math.sign(playerEntity.model.scale.z) * scale,
+					});
 				});
 			} else {
 				const playerEntity = this.getPlayerEntity(players[0].id);
-				if (playerEntity) {
-					playerEntity.model.position.set(x, surfaceY, z);
-					gsap.to(playerEntity.model.scale, {
-						x: Math.sign(playerEntity.model.scale.x),
-						y: Math.sign(playerEntity.model.scale.y),
-						z: Math.sign(playerEntity.model.scale.z),
-					});
-				}
+				if (!playerEntity) continue;
+				playerEntity.model.position.set(x, surfaceY, z);
+				gsap.to(playerEntity.model.scale, {
+					x: Math.sign(playerEntity.model.scale.x),
+					y: Math.sign(playerEntity.model.scale.y),
+					z: Math.sign(playerEntity.model.scale.z),
+				});
 			}
-		});
-
-		function groupByPositionIndex(
-			items: PlayerInfo[],
-			positionMap: Map<string, number>,
-		): Array<{ positionIndex: number; players: PlayerInfo[] }> {
-			const groups = new Map<number, PlayerInfo[]>();
-
-			for (const item of items) {
-				// 使用 positionMap 而不是 item.positionIndex
-				const pos = positionMap.get(item.id) ?? item.positionIndex;
-				if (!groups.has(pos)) {
-					groups.set(pos, []);
-				}
-				groups.get(pos)!.push(item);
-			}
-
-			return Array.from(groups.entries()).map(([positionIndex, players]) => ({
-				positionIndex,
-				players,
-			}));
 		}
 
 		function generateCirclePointsOffset(
@@ -2170,18 +2385,16 @@ export class GameRenderer {
 			y: number,
 			r: number,
 			n: number,
-		): {
-			offsetX: number;
-			offsetY: number;
-		}[] {
-			const points = [];
-			r = r - PLAY_MODEL_SIZE / 2;
+		): Array<{ offsetX: number; offsetY: number }> {
+			const points: Array<{ offsetX: number; offsetY: number }> = [];
+			const radius = r - PLAY_MODEL_SIZE / 2;
 			const angleStep = (2 * Math.PI) / n;
 			for (let i = 0; i < n; i++) {
 				const angle = i * angleStep;
-				const pointX = r * Math.cos(angle);
-				const pointY = r * Math.sin(angle);
-				points.push({ offsetX: pointX, offsetY: pointY });
+				points.push({
+					offsetX: radius * Math.cos(angle),
+					offsetY: radius * Math.sin(angle),
+				});
 			}
 			return points;
 		}
@@ -2473,16 +2686,10 @@ export class GameRenderer {
 
 		if (xRatio > yRatio) {
 			edge = clampedX >= 0 ? "right" : "left";
-			centerX =
-				edge === "right"
-					? viewportWidth - SPEECH_BUBBLE_MARGIN - width / 2
-					: SPEECH_BUBBLE_MARGIN + width / 2;
+			centerX = edge === "right" ? viewportWidth - SPEECH_BUBBLE_MARGIN - width / 2 : SPEECH_BUBBLE_MARGIN + width / 2;
 		} else {
 			edge = clampedY >= 0 ? "top" : "bottom";
-			centerY =
-				edge === "top"
-					? SPEECH_BUBBLE_MARGIN + height / 2
-					: viewportHeight - SPEECH_BUBBLE_MARGIN - height / 2;
+			centerY = edge === "top" ? SPEECH_BUBBLE_MARGIN + height / 2 : viewportHeight - SPEECH_BUBBLE_MARGIN - height / 2;
 		}
 
 		return {
@@ -2729,7 +2936,7 @@ export class GameRenderer {
 				if (!this.animationManager.hasAnimation(instanceId)) {
 					this.animationManager.registerModel(instanceId, modelData.gltf, mapItemModel, {
 						autoPlay: true,
-						loop: THREE.LoopRepeat
+						loop: THREE.LoopRepeat,
 					});
 				}
 			} else {

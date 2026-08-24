@@ -1,4 +1,5 @@
 import { ResourcesType, GameMap, PlayerInfo, PropertyInfo, GameData, IGameProcessExportData } from "@mine-monopoly/types";
+import type { MapPathChoiceRequest } from "@mine-monopoly/types";
 import { defineStore } from "pinia";
 import { useUserInfo } from ".";
 import useEventBus from "@src/utils/event-bus";
@@ -51,6 +52,7 @@ export const useMapData = defineStore("map-data", {
 		mapItems: [],
 		chanceCards: [],
 		mapItemTypes: [],
+		mapPaths: [],
 		mapIndex: [],
 		roles: [],
 		inUse: false,
@@ -106,8 +108,15 @@ export const useMapData = defineStore("map-data", {
 	},
 });
 
+interface GameDataRuntimeState {
+	/** 当前客户端等待玩家选择的地图路径请求；不属于宿主同步的 GameData。 */
+	mapPathChoiceRequest: MapPathChoiceRequest | null;
+}
+
+type GameDataStoreState = GameData & GameDataRuntimeState;
+
 export const useGameData = defineStore("game-data", {
-	state: (): GameData => {
+	state: (): GameDataStoreState => {
 		return {
 			exportData: {} as IGameProcessExportData,
 			currentPlayerIdInRound: "",
@@ -117,6 +126,7 @@ export const useGameData = defineStore("game-data", {
 			properties: new Array<PropertyInfo>(),
 			isGameOver: false,
 			rankedPlayerIds: [],
+			mapPathChoiceRequest: null,
 		};
 	},
 	getters: {
@@ -124,6 +134,14 @@ export const useGameData = defineStore("game-data", {
 		myGameInfo: (state) => state.players.find((p) => p.id === useUserInfo().userId),
 	},
 	actions: {
+		setMapPathChoiceRequest(request: MapPathChoiceRequest) {
+			this.mapPathChoiceRequest = request;
+		},
+		clearMapPathChoiceRequest(requestId?: string) {
+			if (!requestId || this.mapPathChoiceRequest?.requestId === requestId) {
+				this.mapPathChoiceRequest = null;
+			}
+		},
 		getPlayerInfoById(id: string) {
 			return this.$state.players.find((p) => p.id === id);
 		},

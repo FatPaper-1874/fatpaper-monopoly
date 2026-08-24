@@ -569,11 +569,18 @@ ipcMain.handle("quit-and-install", () => {
 });
 
 // MCP Server handlers
+const DEFAULT_MCP_PORT = 3000;
 let mcpServerRunning = false;
 let httpServer: HTTPMCPServer | null = null;
 
-ipcMain.handle("start-mcp-server", async (event) => {
+ipcMain.handle("start-mcp-server", async (_event, port?: unknown) => {
 	console.log("[MCP] start-mcp-server called, mcpServerRunning:", mcpServerRunning);
+
+	if (port !== undefined && (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)) {
+		return { success: false, error: "MCP 端口必须是 1 到 65535 之间的整数" };
+	}
+
+	const requestedPort = typeof port === "number" ? port : DEFAULT_MCP_PORT;
 
 	if (mcpServerRunning) {
 		console.log("[MCP] Server already running, URL:", httpServer?.url);
@@ -581,6 +588,7 @@ ipcMain.handle("start-mcp-server", async (event) => {
 			success: true,
 			message: "MCP Server already running",
 			url: httpServer?.url || null,
+			port: httpServer?.port || null,
 		};
 	}
 
@@ -655,7 +663,7 @@ ipcMain.handle("start-mcp-server", async (event) => {
 
 		// 启动 HTTP 服务器（会等待服务器真正启动）
 		httpServer = await startHTTPMCPServer({
-			port: 3000, // 默认端口，如果被占用会自动分配
+			port: requestedPort, // 指定端口被占用时会自动尝试后续端口
 			host: "127.0.0.1",
 			onReady: ({ port, url }: { port: any; url: any }) => {
 				console.log("[MCP] onReady callback - Server started on:", url);
@@ -667,7 +675,7 @@ ipcMain.handle("start-mcp-server", async (event) => {
 				console.log("[MCP] Sending mcp-server-status event to renderer");
 				if (win) {
 					console.log("[MCP] Window exists, sending event with data:", { running: true, url });
-					win.webContents.send("mcp-server-status", { running: true, url });
+					win.webContents.send("mcp-server-status", { running: true, url, port });
 					console.log("[MCP] Event sent successfully");
 				} else {
 					console.log("[MCP] ERROR: win is null!");
@@ -690,6 +698,7 @@ ipcMain.handle("start-mcp-server", async (event) => {
 			success: true,
 			message: "MCP Server started",
 			url: httpServer.url,
+			port: httpServer.port,
 		};
 
 		console.log("[MCP] Returning result:", result);
@@ -731,6 +740,7 @@ ipcMain.handle("get-mcp-status", async () => {
 	return {
 		running: mcpServerRunning,
 		url: httpServer?.url || null,
+		port: httpServer?.port || null,
 	};
 });
 

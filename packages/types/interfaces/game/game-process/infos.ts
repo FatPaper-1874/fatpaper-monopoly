@@ -3,6 +3,7 @@ import { UserInRoomInfo } from "../item";
 import { DiceInfo } from "../util";
 import { UISchema } from "./ui";
 import { IGameProcessExportData } from "./core";
+import type { MapPathRuntimeState } from "../map";
 
 /**
  * 游戏数据接口
@@ -23,6 +24,9 @@ export interface GameData {
 
 	/** 玩家列表 */
 	players: PlayerInfo[];
+
+	/** 地图路径会话状态；旧客户端和旧存档可省略。 */
+	mapPathRuntimeState?: MapPathRuntimeState;
 
 	/** 地产列表 */
 	properties: PropertyInfo[];
@@ -60,7 +64,16 @@ export interface PlayerInfo {
 	/** 玩家身上的 Buff 列表 */
 	buff: Buff[];
 
-	/** 当前位置索引 */
+	/**
+	 * 当前位置地图项 ID。
+	 * MapPath V2 的位置事实；未提供时由旧 positionIndex + mapIndex 兼容恢复。
+	 */
+	positionMapItemId?: string;
+
+	/**
+	 * 旧版线性位置索引。
+	 * @deprecated 仅供旧 UI、effectCode 和旧存档兼容；新逻辑应读取 positionMapItemId。
+	 */
 	positionIndex: number;
 
 	/** 停止回合数 */

@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { useMapDataStore, useResourceStore } from "@src/stores";
 import { RolePreviewerRenderer } from "@src/utils/three/RolePreviewerRenderer";
-import { message } from "ant-design-vue";
-import { ref, reactive, onMounted, onBeforeUnmount, computed, watch } from "vue";
+import { message, Modal } from "ant-design-vue";
+import { ref, reactive, onMounted, onBeforeUnmount, computed, watch, h } from "vue";
 import CodeEditor from "@src/components/code-editor/index.vue";
 import libContent from "@src/components/code-editor/editor-lib.d.ts?raw";
 import { ROLE_TEMPLATE as templateText } from "@src/components/code-editor/code-templates";
 import { Role } from "@mine-monopoly/types";
 import { ResourcePicker } from "@src/components/resource-picker";
-import { mapContentService } from "@src/services";
+import { CodeValidationError, mapContentService } from "@src/services";
 import { generateShortId } from "@src/utils/short-id";
 
 const { role } = defineProps<{ role: Role | undefined }>();
@@ -46,6 +46,7 @@ const roleForm = reactive<FormState>({
 	initCode: "",
 });
 const roleIdSuffix = ref(role ? role.id.replace(/^role-/, '') : '');
+const submitting = ref(false);
 
 const emits = defineEmits(["submit"]);
 
@@ -54,46 +55,62 @@ async function copyToClipboard(text: string) {
 	message.success("已复制");
 }
 
-function handleSubmit() {
-	if (role) {
-		handleEditRole();
-	} else {
-		handleCreateRole();
+function showCodeValidationModal(error: CodeValidationError) {
+	Modal.confirm({
+		title: "代码校验失败",
+		content: h("pre", { style: "max-height: 360px; overflow: auto; white-space: pre-wrap; margin: 0;" }, error.message),
+		okText: "忽略错误并提交",
+		cancelText: "返回修改",
+		okType: "danger",
+		onOk: () => handleSubmit(true),
+	});
+}
+
+async function handleSubmit(skipCodeValidation: boolean = false) {
+	if (submitting.value) return;
+	submitting.value = true;
+
+	try {
+		if (role) {
+			await handleEditRole(skipCodeValidation);
+		} else {
+			await handleCreateRole(skipCodeValidation);
+		}
+	} catch (e: unknown) {
+		if (e instanceof CodeValidationError) {
+			showCodeValidationModal(e);
+			return;
+		}
+		message.error(e instanceof Error ? e.message : "提交失败", 1);
+	} finally {
+		submitting.value = false;
 	}
 }
 
-async function handleEditRole() {
-	try {
-		if (!role) return;
-		const _role = {
-			roleId: role.id,
-			name: roleForm.name,
-			description: roleForm.description,
-			color: roleForm.color,
-			imageId: roleForm.imageId,
-			initCode: roleForm.initCode,
-		};
-		await mapContentService.updateRole(_role);
-		emits("submit");
-	} catch (e: any) {
-		message.error(e.message, 1);
-	}
+async function handleEditRole(skipCodeValidation: boolean) {
+	if (!role) return;
+	const _role = {
+		roleId: role.id,
+		name: roleForm.name,
+		description: roleForm.description,
+		color: roleForm.color,
+		imageId: roleForm.imageId,
+		initCode: roleForm.initCode,
+	};
+	await mapContentService.updateRole(_role, { skipCodeValidation: skipCodeValidation === true });
+	emits("submit");
 }
 
-async function handleCreateRole() {
-	try {
-		const role = {
-			name: roleForm.name,
-			description: roleForm.description,
-			color: roleForm.color,
-			imageId: roleForm.imageId,
-			initCode: roleForm.initCode,
-		};
-		await mapContentService.addRole(role);
-		emits("submit");
-	} catch (e: any) {
-		message.error(e.message, 1);
-	}
+async function handleCreateRole(skipCodeValidation: boolean) {
+	const newRole = {
+		name: roleForm.name,
+		description: roleForm.description,
+		color: roleForm.color,
+		imageId: roleForm.imageId,
+		initCode: roleForm.initCode,
+	};
+	await mapContentService.addRole(newRole, { skipCodeValidation: skipCodeValidation === true });
+	emits("submit");
 }
 
 async function loadRole(imageId: string) {
@@ -132,7 +149,7 @@ function handleClose() {
 	<div class="role-form-container">
 		<div class="role-form">
 			<div class="form-content">
-				<a-form @finish="handleSubmit" :model="roleForm" name="basic" autocomplete="off">
+				<a-form @finish="() => handleSubmit()" :model="roleForm" name="basic" autocomplete="off">
 					<a-form-item label="ID">
 						<div style="display: flex; gap: 4px">
 							<a-input
@@ -174,7 +191,7 @@ function handleClose() {
 				</a-form>
 			</div>
 			<div class="footer-actions">
-				<a-button type="primary" block @click="handleSubmit">
+				<a-button type="primary" block :loading="submitting" @click="() => handleSubmit()">
 					{{ role ? '保存修改' : '创建角色' }}
 				</a-button>
 			</div>

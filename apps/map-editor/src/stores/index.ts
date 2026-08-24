@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ChanceCardInfo, FormSchema, GameMap, GameMapChangelogEntry, ModifierTemplate, PropertyInfo, UITemplate } from "@mine-monopoly/types";
+import { ChanceCardInfo, FormSchema, GameMap, MapPath, GameMapChangelogEntry, ModifierTemplate, PropertyInfo, UITemplate } from "@mine-monopoly/types";
 import { CameraMode, OperationMode } from "@src/enums";
 import {
 	MapItem,
@@ -13,7 +13,22 @@ import {
 import { eventBus } from "@src/utils/event-bus";
 import { createDefaultMapData } from "../utils/file/index";
 import { generateShortId } from "../utils/short-id";
+import { createMapPathId } from "@mine-monopoly/utils";
 import { cloneDeep } from "lodash";
+
+export type MapPathValidationResult = {
+	level: "error" | "warning";
+	code: string;
+	message: string;
+	pathId?: string;
+	mapItemId?: string;
+};
+
+type MapPathHistoryEntry = {
+	label: string;
+	before: { mapPaths: MapPath[]; mapIndex: string[] };
+	after: { mapPaths: MapPath[]; mapIndex: string[] };
+};
 
 export { useVersionStore } from "./version-store";
 
@@ -57,6 +72,8 @@ export const useMapDataStore = defineStore("MapData", {
 			if (index === -1) throw Error("寻找MapItem失败");
 			this.unLinkMapItem(id);
 
+			this.removeMapPathsByMapItemId(id, false);
+			if (this.startMapItemId === id) this.startMapItemId = undefined;
 			this.mapItems.splice(index, 1);
 			eventBus.emit("map-item-deleted", id);
 			this.updateMapIndex([]);
@@ -206,6 +223,253 @@ export const useMapDataStore = defineStore("MapData", {
 			this.roles.splice(deleteIndex, 1);
 		},
 
+		// MapPath
+		getPathsFrom(mapItemId: string): MapPath[] {
+			return this.mapPaths.filter((path) => path.fromMapItemId === mapItemId);
+		},
+		getPathsTo(mapItemId: string): MapPath[] {
+			return this.mapPaths.filter((path) => path.toMapItemId === mapItemId);
+		},
+		findMapPathById(pathId: string): MapPath | undefined {
+			return this.mapPaths.find((path) => path.id === pathId);
+		},
+		addMapPath(input: Omit<MapPath, "id"> & { id?: string }): MapPath {
+			const path: MapPath = {
+				...input,
+				id: input.id || createMapPathId(input.fromMapItemId, input.toMapItemId),
+			};
+			if (this.findMapPathById(path.id)) throw Error("路径 ID 已存在");
+			this.assertMapPathCanBeSaved(path);
+			this.mutateMapPaths("新增路径", () => {
+				this.mapPaths.push(path);
+				this.clearMapIndexForPathTopologyChange();
+				eventBus.emit("map-path-added", path.id);
+			});
+			return path;
+		},
+		updateMapPath(pathId: string, patch: Partial<Pick<MapPath, "fromMapItemId" | "toMapItemId" | "initEnable" | "name" | "description">>): void {
+			const path = this.findMapPathById(pathId);
+			if (!path) throw Error("找不到目标路径");
+			const nextPath = { ...path, ...patch };
+			this.assertMapPathCanBeSaved(nextPath, pathId);
+
+			const endpointChanged =
+				nextPath.fromMapItemId !== path.fromMapItemId ||
+				nextPath.toMapItemId !== path.toMapItemId;
+			const initEnableChanged = (nextPath.initEnable === false) !== (path.initEnable === false);
+			const metadataChanged = nextPath.name !== path.name || nextPath.description !== path.description;
+			if (!endpointChanged && !initEnableChanged && !metadataChanged) return;
+
+			this.mutateMapPaths("编辑路径", () => {
+				Object.assign(path, patch);
+				// 只有实际改变路径行为时才使旧版 mapIndex 失效；名称和说明不影响兼容拓扑。
+				if (endpointChanged || initEnableChanged) this.clearMapIndexForPathTopologyChange();
+				eventBus.emit("map-path-updated", pathId);
+			});
+		},
+		removeMapPath(pathId: string): void {
+			this.removeMapPaths((path) => path.id === pathId, "删除路径");
+		},
+		removeMapPathsByMapItemId(mapItemId: string, recordHistory = true): void {
+			this.removeMapPaths(
+				(path) => path.fromMapItemId === mapItemId || path.toMapItemId === mapItemId,
+				"删除节点关联路径",
+				recordHistory,
+			);
+		},
+		moveMapPath(pathId: string, direction: -1 | 1): void {
+			const index = this.mapPaths.findIndex((path) => path.id === pathId);
+			if (index < 0) throw Error("找不到目标路径");
+			const targetIndex = index + direction;
+			if (targetIndex < 0 || targetIndex >= this.mapPaths.length) return;
+			this.mutateMapPaths("调整路径优先级", () => {
+				const [path] = this.mapPaths.splice(index, 1);
+				this.mapPaths.splice(targetIndex, 0, path);
+				this.clearMapIndexForPathTopologyChange();
+				eventBus.emit("map-path-updated", pathId);
+			});
+		},
+		setStartMapItemId(mapItemId: string | undefined): void {
+			if (mapItemId && !this.findMapItemById(mapItemId)) throw Error("找不到地图起点");
+			this.startMapItemId = mapItemId;
+		},
+		undoMapPathChange(): boolean {
+			const entry = useEditorStore().popMapPathUndo();
+			if (!entry) return false;
+			this.restoreMapPathState(entry.before);
+			return true;
+		},
+		redoMapPathChange(): boolean {
+			const entry = useEditorStore().popMapPathRedo();
+			if (!entry) return false;
+			this.restoreMapPathState(entry.after);
+			return true;
+		},
+		restoreMapPathState(state: { mapPaths: MapPath[]; mapIndex: string[] }): void {
+			this.mapPaths = cloneDeep(state.mapPaths);
+			this.mapIndex = cloneDeep(state.mapIndex);
+			eventBus.emit("map-paths-replaced");
+			eventBus.emit("map-index-update", [...this.mapIndex]);
+		},
+		/** 是否已明确配置可行走的 MapItem 类型。 */
+		hasPathMapItemTypeSelection(): boolean {
+			return (this.pathMapItemTypeIds?.length ?? 0) > 0;
+		},
+		/** 设置可行走的 MapItem 类型；地皮承载物始终不会作为路径节点。 */
+		setPathMapItemTypeIds(typeIds: string[]): void {
+			this.pathMapItemTypeIds = [...new Set(typeIds)];
+		},
+		/** 获取玩家实际可经过的路径节点，而非地图中的全部装饰元素。 */
+		getPathMapItems(): MapItem[] {
+			const selectedTypeIds = this.pathMapItemTypeIds ?? [];
+			if (selectedTypeIds.length > 0) {
+				const selectedTypeNames = new Set(
+					selectedTypeIds
+						.map((id) => this.mapItemTypes.find((type) => type.id === id)?.name)
+						.filter((name): name is string => Boolean(name)),
+				);
+				return this.mapItems.filter((item) => {
+					if (item.beLinked) return false;
+					const itemTypeId = item.type?.id;
+					const itemTypeName = item.type?.name;
+					return Boolean(
+						(itemTypeId && selectedTypeIds.includes(itemTypeId)) ||
+						(itemTypeName && selectedTypeNames.has(itemTypeName)),
+					);
+				});
+			}
+
+			// 旧地图没有保存节点类型时，回退为已建路径的端点，避免把装饰和地皮承载物误判为路径节点。
+			const pathNodeIds = new Set<string>();
+			for (const path of this.mapPaths) {
+				pathNodeIds.add(path.fromMapItemId);
+				pathNodeIds.add(path.toMapItemId);
+			}
+			return this.mapItems.filter((item) => !item.beLinked && pathNodeIds.has(item.id));
+		},
+		getMapPathCompatibility(): { compatible: boolean; reason?: string } {
+			const pathMapItems = this.getPathMapItems();
+			const pathMapItemIds = new Set(pathMapItems.map((item) => item.id));
+			if (this.mapPaths.length === 0) return { compatible: pathMapItems.length === 0, reason: "没有路径" };
+			if (this.mapPaths.some((path) => path.initEnable === false)) return { compatible: false, reason: "包含初始关闭路径" };
+			if (this.mapPaths.some((path) => !pathMapItemIds.has(path.fromMapItemId) || !pathMapItemIds.has(path.toMapItemId))) return { compatible: false, reason: "路径包含非路径节点" };
+			if (this.mapPaths.length !== pathMapItems.length) return { compatible: false, reason: "路径数与节点数不一致" };
+			const fromCounts = new Map<string, number>();
+			const toCounts = new Map<string, number>();
+			for (const path of this.mapPaths) {
+				fromCounts.set(path.fromMapItemId, (fromCounts.get(path.fromMapItemId) ?? 0) + 1);
+				toCounts.set(path.toMapItemId, (toCounts.get(path.toMapItemId) ?? 0) + 1);
+			}
+			if (pathMapItems.some((item) => fromCounts.get(item.id) !== 1 || toCounts.get(item.id) !== 1)) {
+				return { compatible: false, reason: "不是覆盖所有路径节点的单向简单闭环" };
+			}
+			return { compatible: true };
+		},
+		validateMapPaths(): MapPathValidationResult[] {
+			const results: MapPathValidationResult[] = [];
+			const pathMapItems = this.getPathMapItems();
+			const pathMapItemIds = new Set(pathMapItems.map((item) => item.id));
+			const hasPathMapItemTypeSelection = this.hasPathMapItemTypeSelection();
+			if (!hasPathMapItemTypeSelection && pathMapItems.length > 0) {
+				results.push({ level: "warning", code: "path-node-types-not-configured", message: "未配置路径节点类型，当前仅按已建路径端点校验，无法识别遗漏节点" });
+			}
+
+			const pairSet = new Set<string>();
+			for (const path of this.mapPaths) {
+				const fromMapItem = this.findMapItemById(path.fromMapItemId);
+				const toMapItem = this.findMapItemById(path.toMapItemId);
+				if (!fromMapItem || !toMapItem) {
+					results.push({ level: "error", code: "dangling-endpoint", message: "路径端点不存在", pathId: path.id });
+				} else if (hasPathMapItemTypeSelection && (!pathMapItemIds.has(fromMapItem.id) || !pathMapItemIds.has(toMapItem.id))) {
+					results.push({ level: "error", code: "non-path-node-endpoint", message: "路径端点不是可行走的路径节点", pathId: path.id });
+				}
+				const pairKey = `${path.fromMapItemId}\u0000${path.toMapItemId}`;
+				if (pairSet.has(pairKey)) results.push({ level: "error", code: "duplicate-directed-path", message: "存在重复的有向路径", pathId: path.id });
+				pairSet.add(pairKey);
+			}
+			for (const mapItem of pathMapItems) {
+				const outgoing = this.getPathsFrom(mapItem.id).filter((path) => pathMapItemIds.has(path.toMapItemId));
+				// 死路是合法设计：仅在存在出边但全部初始关闭时给出提示。
+				if (outgoing.length > 0 && outgoing.every((path) => path.initEnable === false)) {
+					results.push({ level: "warning", code: "all-outgoing-disabled", message: "节点所有出边初始关闭", mapItemId: mapItem.id });
+				}
+			}
+			const compatibility = this.getMapPathCompatibility();
+			// mapIndex 仅用于旧版线性地图兼容；新图结构清空它后不应再因分支或死路报警。
+			if (this.mapIndex.length > 0 && !compatibility.compatible && this.mapPaths.length > 0) {
+				results.push({ level: "warning", code: "legacy-map-index-incompatible", message: `与旧版 mapIndex 不兼容：${compatibility.reason}` });
+			}
+			const startId = this.startMapItemId || this.mapIndex[0] || pathMapItems[0]?.id;
+			if (startId && pathMapItemIds.has(startId)) {
+				const visited = new Set<string>([startId]);
+				const queue = [startId];
+				while (queue.length > 0) {
+					const currentId = queue.shift()!;
+					for (const path of this.getPathsFrom(currentId)) {
+						if (pathMapItemIds.has(path.toMapItemId) && !visited.has(path.toMapItemId)) {
+							visited.add(path.toMapItemId);
+							queue.push(path.toMapItemId);
+						}
+					}
+				}
+				for (const mapItem of pathMapItems) {
+					if (!visited.has(mapItem.id)) results.push({ level: "warning", code: "unreachable-node", message: "从地图起点不可达", mapItemId: mapItem.id });
+				}
+			} else if (this.startMapItemId && pathMapItems.length > 0) {
+				results.push({ level: "warning", code: "start-not-path-node", message: "地图起点不是可行走的路径节点", mapItemId: this.startMapItemId });
+			}
+			return results;
+		},
+		replaceMapPaths(paths: MapPath[], label = "重建路径"): void {
+			const nextPaths = cloneDeep(paths);
+			const pathIds = new Set<string>();
+			const directedPairs = new Set<string>();
+			for (const path of nextPaths) {
+				if (!this.findMapItemById(path.fromMapItemId) || !this.findMapItemById(path.toMapItemId)) {
+					throw Error("路径的起点和终点必须是现有 MapItem");
+				}
+				if (pathIds.has(path.id)) throw Error("路径 ID 不能重复");
+				const pairKey = `${path.fromMapItemId}\u0000${path.toMapItemId}`;
+				if (directedPairs.has(pairKey)) throw Error("同一方向的路径只能存在一条");
+				pathIds.add(path.id);
+				directedPairs.add(pairKey);
+			}
+			this.mutateMapPaths(label, () => {
+				this.mapPaths = nextPaths;
+				this.clearMapIndexForPathTopologyChange();
+				eventBus.emit("map-paths-replaced");
+			});
+		},
+		assertMapPathCanBeSaved(path: MapPath, ignoredPathId?: string): void {
+			if (!this.findMapItemById(path.fromMapItemId) || !this.findMapItemById(path.toMapItemId)) throw Error("路径的起点和终点必须是现有 MapItem");
+			const duplicate = this.mapPaths.some((candidate) => candidate.id !== ignoredPathId && candidate.fromMapItemId === path.fromMapItemId && candidate.toMapItemId === path.toMapItemId);
+			if (duplicate) throw Error("同一方向的路径只能存在一条");
+		},
+		removeMapPaths(predicate: (path: MapPath) => boolean, label: string, recordHistory = true, emitIndividually = true): void {
+			const removed = this.mapPaths.filter(predicate);
+			if (removed.length === 0) return;
+			const mutation = () => {
+				this.mapPaths = this.mapPaths.filter((path) => !predicate(path));
+				this.clearMapIndexForPathTopologyChange();
+				if (emitIndividually) {
+					for (const path of removed) eventBus.emit("map-path-removed", path.id);
+				} else {
+					eventBus.emit("map-paths-replaced");
+				}
+			};
+			if (recordHistory) this.mutateMapPaths(label, mutation);
+			else mutation();
+		},
+		mutateMapPaths(label: string, mutation: () => void): void {
+			const before = { mapPaths: cloneDeep(this.mapPaths), mapIndex: cloneDeep(this.mapIndex) };
+			mutation();
+			const after = { mapPaths: cloneDeep(this.mapPaths), mapIndex: cloneDeep(this.mapIndex) };
+			if (JSON.stringify(before) !== JSON.stringify(after)) useEditorStore().pushMapPathHistory({ label, before, after });
+		},
+		clearMapIndexForPathTopologyChange(): void {
+			if (this.mapIndex.length > 0) this.updateMapIndex([]);
+		},
+
 		//MapIndex
 		updateMapIndex(indexs: string[]) {
 			this.mapIndex = indexs;
@@ -289,11 +553,19 @@ export const useMapDataStore = defineStore("MapData", {
 			const item = this.findMapItemById(id);
 			if (!item) throw Error("找不到目标地图元素");
 			Object.assign(item, updates);
+			eventBus.emit("map-paths-for-map-item-updated", id);
 		},
 
 		// 批量删除 MapItem
 		batchRemoveMapItem(ids: string[]) {
 			if (ids.length === 0) return;
+			this.removeMapPaths(
+				(path) => ids.includes(path.fromMapItemId) || ids.includes(path.toMapItemId),
+				"批量删除节点关联路径",
+				false,
+				false,
+			);
+			if (this.startMapItemId && ids.includes(this.startMapItemId)) this.startMapItemId = undefined;
 
 			const deletedItems: MapItem[] = [];
 
@@ -541,6 +813,10 @@ type EditorState = {
 		timestamp: number;
 		items: MapItem[];
 	}>;
+	mapPathUndoStack: MapPathHistoryEntry[];
+	mapPathRedoStack: MapPathHistoryEntry[];
+	pathDraftSourceId?: string;
+	activeMapPathId?: string;
 	showIndicators: boolean;
 };
 
@@ -582,7 +858,7 @@ const alertList: EditorAlert[] = [
 	{
 		type: "error",
 		message: "没有设置地图索引路径",
-		visible: () => useMapDataStore().mapIndex.length === 0,
+		visible: () => useMapDataStore().mapPaths.length === 0 && useMapDataStore().mapIndex.length === 0,
 	},
 	{
 		type: "error",
@@ -629,6 +905,10 @@ export const useEditorStore = defineStore("Editor", {
 		boxSelectUpdateCounter: 0,
 		// 撤销删除历史初始值（分批次）
 		deletedMapItemBatches: [],
+		mapPathUndoStack: [],
+		mapPathRedoStack: [],
+		pathDraftSourceId: undefined,
+		activeMapPathId: undefined,
 		showIndicators: true,
 	}),
 	actions: {
@@ -729,6 +1009,31 @@ export const useEditorStore = defineStore("Editor", {
 		clearDeletedHistory() {
 			this.deletedMapItemBatches = [];
 		},
+		pushMapPathHistory(entry: MapPathHistoryEntry) {
+			this.mapPathUndoStack.push(entry);
+			if (this.mapPathUndoStack.length > 100) this.mapPathUndoStack.shift();
+			this.mapPathRedoStack = [];
+		},
+		popMapPathUndo(): MapPathHistoryEntry | undefined {
+			const entry = this.mapPathUndoStack.pop();
+			if (entry) this.mapPathRedoStack.push(entry);
+			return entry;
+		},
+		popMapPathRedo(): MapPathHistoryEntry | undefined {
+			const entry = this.mapPathRedoStack.pop();
+			if (entry) this.mapPathUndoStack.push(entry);
+			return entry;
+		},
+		clearMapPathHistory() {
+			this.mapPathUndoStack = [];
+			this.mapPathRedoStack = [];
+		},
+		setPathDraftSource(mapItemId?: string) {
+			this.pathDraftSourceId = mapItemId;
+		},
+		setActiveMapPath(pathId?: string) {
+			this.activeMapPathId = pathId;
+		},
 		toggleIndicators() {
 			this.showIndicators = !this.showIndicators;
 		},
@@ -760,5 +1065,7 @@ export const useEditorStore = defineStore("Editor", {
 			return items;
 		},
 		canUndoDelete: (state) => state.deletedMapItemBatches.length > 0,
+		canUndoMapPath: (state) => state.mapPathUndoStack.length > 0,
+		canRedoMapPath: (state) => state.mapPathRedoStack.length > 0,
 	},
 });

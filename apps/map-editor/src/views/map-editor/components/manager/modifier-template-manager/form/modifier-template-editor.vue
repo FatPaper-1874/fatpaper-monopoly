@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
-import { message } from "ant-design-vue";
+import { h, ref, computed, watch, onMounted } from "vue";
+import { message, Modal } from "ant-design-vue";
 import { ModifierTemplate } from "@mine-monopoly/types";
 import CodeEditor from "@src/components/code-editor/index.vue";
+import { useMonacoValidator } from "@src/components/code-editor/composables/useMonacoValidator";
 import libContent from "@src/components/code-editor/editor-lib.d.ts?raw";
 import { generateShortId } from "@src/utils/short-id";
 import { generateModifierTemplate, generateModifierParams, replaceEffectCodeParams } from "@src/components/code-editor/code-templates";
@@ -14,6 +15,7 @@ const localData = ref<ModifierTemplate>(JSON.parse(JSON.stringify(props.data)));
 
 const idPrefix = "mod-";
 const idSuffix = ref(localData.value.id.replace(/^mod-/, ""));
+const submitting = ref(false);
 
 if (!localData.value.descriptor.meta) {
 	localData.value.descriptor.meta = { name: "", description: "", source: "", triggerTiming: "", tags: [] };
@@ -87,7 +89,24 @@ function handleIdInput(event: Event) {
 	localData.value.id = value ? `${idPrefix}${value}` : generateShortId("mod");
 }
 
-function handleSave() {
+function showCodeValidationModal(errors: Array<{ line: number; column: number; message: string }>) {
+	const content = errors
+		.map((error) => `${error.line > 0 ? `L${error.line}` : "模板"}:C${error.column} ${error.message}`)
+		.join("\n");
+
+	Modal.confirm({
+		title: "代码校验失败",
+		content: h("pre", { style: "max-height: 360px; overflow: auto; white-space: pre-wrap; margin: 0;" }, content),
+		okText: "忽略错误并保存",
+		cancelText: "返回修改",
+		okType: "danger",
+		onOk: () => handleSave(true),
+	});
+}
+
+async function handleSave(skipCodeValidation: boolean = false) {
+	if (submitting.value) return;
+
 	if (!localData.value.name.trim()) {
 		message.warning("请填写修饰器名称");
 		return;
@@ -102,14 +121,30 @@ function handleSave() {
 		message.error("标识包含非法字符，仅支持字母、数字、下划线、连字符");
 		return;
 	}
-	localData.value.slug = slug;
-
 	if (!localData.value.descriptor.commandType.trim()) {
 		message.warning("请选择命令类型 (commandType)");
 		return;
 	}
 
-	emit("save", localData.value);
+	submitting.value = true;
+	try {
+		if (skipCodeValidation !== true && localData.value.effectCode.trim()) {
+			const { validate } = useMonacoValidator();
+			const result = await validate(localData.value.effectCode, "modifier", {
+				commandType: localData.value.descriptor.commandType,
+				mode: "full",
+			});
+			if (!result.valid) {
+				showCodeValidationModal(result.errors);
+				return;
+			}
+		}
+
+		localData.value.slug = slug;
+		emit("save", localData.value);
+	} finally {
+		submitting.value = false;
+	}
 }
 </script>
 
@@ -205,7 +240,7 @@ function handleSave() {
 			<div class="form-footer">
 				<div style="margin-left: auto">
 					<a-button @click="$emit('cancel')" style="margin-right: 8px">取消</a-button>
-					<a-button type="primary" @click="handleSave">保存修饰器</a-button>
+					<a-button type="primary" :loading="submitting" @click="() => handleSave()">保存修饰器</a-button>
 				</div>
 			</div>
 		</div>

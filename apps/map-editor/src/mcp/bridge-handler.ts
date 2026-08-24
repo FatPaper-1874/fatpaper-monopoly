@@ -11,6 +11,7 @@ import { eventBus } from "@src/utils/event-bus";
 import { mapContentService } from "@src/services";
 import type { MCPToolName } from "./bridge.js";
 import { validateMap } from "./utils.js";
+import { createMapPathId } from "@mine-monopoly/utils";
 
 /**
  * Send MCP operation feedback event
@@ -42,6 +43,7 @@ const batchMutationTools = new Set<MCPToolName>([
 	"create_custom_ui", "update_custom_ui", "remove_custom_ui",
 	"create_modifier_template", "update_modifier_template", "remove_modifier_template",
 	"update_extra_libs",
+	"add_map_path", "update_map_path", "remove_map_path", "replace_map_paths", "update_map_path_settings",
 ]);
 
 /**
@@ -298,6 +300,91 @@ export async function handleToolInvocation(toolName: MCPToolName, args: any): Pr
 				break;
 			}
 
+			// MapPath V2 Tools
+			case "get_map_path_graph": {
+				result = toPlain({
+					mapPaths: mapDataStore.mapPaths,
+					pathMapItemTypeIds: mapDataStore.pathMapItemTypeIds ?? [],
+					startMapItemId: mapDataStore.startMapItemId,
+					mapIndex: mapDataStore.mapIndex,
+					legacyCompatibility: mapDataStore.getMapPathCompatibility(),
+					pathNodeIds: mapDataStore.getPathMapItems().map((mapItem) => mapItem.id),
+				});
+				break;
+			}
+
+			case "list_map_paths": {
+				const paths = mapDataStore.mapPaths.filter((path) => {
+					if (args.mapItemId) {
+						const matchesOutgoing = path.fromMapItemId === args.mapItemId;
+						const matchesIncoming = path.toMapItemId === args.mapItemId;
+						if (args.direction === "outgoing" && !matchesOutgoing) return false;
+						if (args.direction === "incoming" && !matchesIncoming) return false;
+						if (args.direction === "all" && !matchesOutgoing && !matchesIncoming) return false;
+					}
+					return args.enabled === undefined || (path.initEnable !== false) === args.enabled;
+				});
+				result = toPlain({ total: paths.length, paths });
+				break;
+			}
+
+			case "get_map_path": {
+				const path = mapDataStore.findMapPathById(args.pathId);
+				if (!path) throw new Error(`MapPath with ID ${args.pathId} not found`);
+				result = toPlain(path);
+				break;
+			}
+
+			case "add_map_path": {
+				const path = mapDataStore.addMapPath(args);
+				result = toPlain(path);
+				break;
+			}
+
+			case "update_map_path": {
+				const { pathId, ...patch } = args;
+				mapDataStore.updateMapPath(pathId, patch);
+				const path = mapDataStore.findMapPathById(pathId);
+				if (!path) throw new Error(`MapPath with ID ${pathId} not found`);
+				result = toPlain(path);
+				break;
+			}
+
+			case "remove_map_path": {
+				if (!mapDataStore.findMapPathById(args.pathId)) throw new Error(`MapPath with ID ${args.pathId} not found`);
+				mapDataStore.removeMapPath(args.pathId);
+				result = { success: true, pathId: args.pathId };
+				break;
+			}
+
+			case "replace_map_paths": {
+				const paths = args.paths.map((path: any) => ({
+					...path,
+					id: path.id || createMapPathId(path.fromMapItemId, path.toMapItemId),
+				}));
+				mapDataStore.replaceMapPaths(paths, "MCP 批量替换路径");
+				result = toPlain({ count: mapDataStore.mapPaths.length, mapPaths: mapDataStore.mapPaths });
+				break;
+			}
+
+			case "update_map_path_settings": {
+				if (args.pathMapItemTypeIds !== undefined) {
+					const unknownTypeIds = args.pathMapItemTypeIds.filter((typeId: string) => !mapDataStore.findMapItemTypeById(typeId));
+					if (unknownTypeIds.length > 0) throw new Error(`Unknown path map item type IDs: ${unknownTypeIds.join(", ")}`);
+				}
+				if (args.startMapItemId !== undefined && args.startMapItemId !== null && !mapDataStore.findMapItemById(args.startMapItemId)) {
+					throw new Error(`Start map item not found: ${args.startMapItemId}`);
+				}
+				if (args.pathMapItemTypeIds !== undefined) mapDataStore.setPathMapItemTypeIds(args.pathMapItemTypeIds);
+				if (args.startMapItemId !== undefined) mapDataStore.setStartMapItemId(args.startMapItemId ?? undefined);
+				result = toPlain({
+					pathMapItemTypeIds: mapDataStore.pathMapItemTypeIds ?? [],
+					startMapItemId: mapDataStore.startMapItemId,
+					pathNodeIds: mapDataStore.getPathMapItems().map((mapItem) => mapItem.id),
+				});
+				break;
+			}
+
 			case "plan_map_changes": {
 				const invalidOperations = args.operations
 					.map((operation: any, index: number) => ({ index, tool: operation.tool }))
@@ -520,8 +607,30 @@ export async function handleToolInvocation(toolName: MCPToolName, args: any): Pr
 			}
 
 			case "validate_map": {
-				const validation = validateMap(mapDataStore.mapItems, mapDataStore.mapEvents, mapDataStore.roles, mapDataStore.mapIndex);
-				result = { ...validation, checkLevel: args.checkLevel ?? "basic" };
+				const legacyValidation = validateMap(
+					mapDataStore.mapItems,
+					mapDataStore.mapEvents,
+					mapDataStore.roles,
+					mapDataStore.mapIndex,
+					mapDataStore.mapPaths.length > 0,
+				);
+				const mapPathResults = mapDataStore.validateMapPaths();
+				const mapPathErrors = mapPathResults
+					.filter((entry) => entry.level === "error")
+					.map((entry) => `[${entry.code}] ${entry.message}${entry.pathId ? `: ${entry.pathId}` : entry.mapItemId ? `: ${entry.mapItemId}` : ""}`);
+				const mapPathWarnings = mapPathResults
+					.filter((entry) => entry.level === "warning")
+					.map((entry) => `[${entry.code}] ${entry.message}${entry.pathId ? `: ${entry.pathId}` : entry.mapItemId ? `: ${entry.mapItemId}` : ""}`);
+				result = {
+					errors: [...legacyValidation.errors, ...mapPathErrors],
+					warnings: [...legacyValidation.warnings, ...mapPathWarnings],
+					isValid: legacyValidation.isValid && mapPathErrors.length === 0,
+					checkLevel: args.checkLevel ?? "basic",
+					mapPathValidation: {
+						results: toPlain(mapPathResults),
+						legacyCompatibility: mapDataStore.getMapPathCompatibility(),
+					},
+				};
 				break;
 			}
 

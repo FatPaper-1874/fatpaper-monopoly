@@ -103,7 +103,7 @@ ipcRenderer.on("mcp-invoke-tool", async (event, { toolName, args }) => {
 
 contextBridge.exposeInMainWorld("mcpAPI", {
 	// MCP Server control
-	startMCPServer: () => ipcRenderer.invoke("start-mcp-server"),
+	startMCPServer: (port?: number) => ipcRenderer.invoke("start-mcp-server", port),
 	stopMCPServer: () => ipcRenderer.invoke("stop-mcp-server"),
 	getMCPStatus: () => ipcRenderer.invoke("get-mcp-status"),
 	getMCPTools: () => ipcRenderer.invoke("get-mcp-tools"),

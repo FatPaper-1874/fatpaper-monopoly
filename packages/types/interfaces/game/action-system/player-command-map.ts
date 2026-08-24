@@ -2,6 +2,7 @@ import { IChanceCard, IPlayer, IProperty, MoneyTagType } from "../game-process";
 import { DiceResult, IDice } from "../util";
 import { ICommandMap } from "./command";
 import { MapItem } from "../item";
+import type { MapMoveDirection, MapMovementSegment } from "../map";
 
 /**
  * 玩家命令映射
@@ -77,15 +78,22 @@ export interface PlayerCommandMap extends ICommandMap {
 	 */
 	"player.walk": {
 		payload: { steps: number; passed?: PassedMapItem[] };
-		result: { steps: number };
+		result: { steps: number; segments?: MapMovementSegment[] };
 	};
 
 	/**
-	 * 玩家传送到指定位置
+	 * 玩家传送到指定位置。
+	 * @deprecated 仅供旧线性地图和 effectCode 兼容；请改用 player.tp.map-item（或 player.tpToMapItem(mapItemId)）。
 	 */
 	"player.tp": {
 		payload: { positionIndex: number };
 		result: { positionIndex: number };
+	};
+
+	/** 玩家按地图项 ID 传送（MapPath V2）。 */
+	"player.tp.map-item": {
+		payload: { mapItemId: string };
+		result: { mapItemId: string };
 	};
 
 	// ===== 游戏事件相关命令 =====
@@ -159,4 +167,8 @@ export interface PassedMapItem {
 	index: number;
 	/** 地图项详情 */
 	mapItem?: MapItem;
+	/** 实际经过的路径 ID（MapPath V2）。 */
+	pathId?: string;
+	/** 实际经过方向（MapPath V2）。 */
+	direction?: MapMoveDirection;
 }

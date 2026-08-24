@@ -4,7 +4,8 @@
  * 将 Pinia stores 中的 GameMap 序列化为结构化目录（代码与数据分离），
  * 支持从目录反序列化回 GameMap。
  */
-import type { GameMap } from "@mine-monopoly/types";
+import type { GameMap, MapPath } from "@mine-monopoly/types";
+import { normalizeGameMap } from "@mine-monopoly/utils";
 import type {
 	MapItem,
 	MapItemType,
@@ -21,7 +22,7 @@ import type {
 import type { FormSchema } from "@mine-monopoly/types/interfaces/game/util";
 import type { ModifierTemplate } from "@mine-monopoly/types/interfaces/game/action-system/modifier";
 import { getFsApi, type ExtendedFsAPI } from "./fs-api";
-import { ensureMapInfoDefaults, parseGameMapFromProtoFile } from "../utils/file/index";
+import { ensureMapInfoDefaults, notifyLegacyMapPathsGenerated, parseGameMapFromProtoFile } from "../utils/file/index";
 import { getInitPhase } from "../views/map-editor/components/manager/process-manager/utils/init-phase";
 
 // ─── 类型 ───
@@ -153,10 +154,15 @@ export async function serializeToDir(mapData: GameMap, dirPath: string): Promise
 		inUse: mapData.inUse,
 		info: mapData.info,
 		serverMapId: mapData.serverMapId || "",
+		startMapItemId: mapData.startMapItemId,
+		pathMapItemTypeIds: mapData.pathMapItemTypeIds ?? [],
 	};
 	await atomicWriteJson(`${dirPath}/map.json`, mapJson);
 
-	// map-index.json
+	// map-paths.json
+	await writeJson(`${dirPath}/map-paths.json`, mapData.mapPaths);
+
+	// map-index.json（旧版线性路径兼容）
 	await writeJson(`${dirPath}/map-index.json`, mapData.mapIndex);
 
 	// building-models.json
@@ -355,12 +361,17 @@ export async function serializeToDir(mapData: GameMap, dirPath: string): Promise
 
 export async function deserializeFromDir(dirPath: string): Promise<DeserializeResult> {
 	dirPath = normalizePath(dirPath);
-	const mapJson = await readJson<{ id: string; inUse: boolean; info: GameMapInfo; serverMapId?: string }>(`${dirPath}/map.json`);
+	const mapJson = await readJson<{ id: string; inUse: boolean; info: GameMapInfo; serverMapId?: string; startMapItemId?: string; pathMapItemTypeIds?: string[] }>(`${dirPath}/map.json`);
 
 	const mapIndex: string[] =
 		(await API().exists(`${dirPath}/map-index.json`))
 			? await readJson<string[]>(`${dirPath}/map-index.json`)
 			: [];
+
+	const mapPaths: MapPath[] | undefined =
+		(await API().exists(`${dirPath}/map-paths.json`))
+			? await readJson<MapPath[]>(`${dirPath}/map-paths.json`)
+			: undefined;
 
 	const buildingModelIdList: string[] =
 		(await API().exists(`${dirPath}/building-models.json`))
@@ -451,6 +462,7 @@ export async function deserializeFromDir(dirPath: string): Promise<DeserializeRe
 	const mapData: GameMap = {
 		...mapJson,
 		info: ensureMapInfoDefaults(mapJson.info),
+		...(mapPaths ? { mapPaths } : {}),
 		mapIndex,
 		buildingModelIdList,
 		mapItems,
@@ -523,7 +535,10 @@ export async function deserializeFromDir(dirPath: string): Promise<DeserializeRe
 		}
 	}
 
-	return { mapData, models, images };
+	// 旧版目录地图（无 map-paths.json）由 mapIndex 生成路径时，弹窗告知
+	if (!Array.isArray(mapPaths) && mapIndex.length > 0) notifyLegacyMapPathsGenerated(mapData);
+
+	return { mapData: normalizeGameMap(mapData), models, images };
 }
 
 // ─── 内部工具函数 ───
@@ -777,7 +792,7 @@ export async function loadMapAuto(filePath: string): Promise<LoadMapResult> {
 		});
 	}
 
-	return { mapData: parsed.mapData, models: modelResources, images: imageResources };
+	return { mapData: normalizeGameMap(parsed.mapData), models: modelResources, images: imageResources };
 	} catch (e: any) {
 		// 友好错误提示
 		const msg = e.message || String(e);

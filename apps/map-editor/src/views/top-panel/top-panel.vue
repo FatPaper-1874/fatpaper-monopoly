@@ -10,6 +10,7 @@ import MCPControlPanel from "@src/components/mcp/MCPControlPanel.vue";
 import ExportProgressDialog from "./export-progress-dialog.vue";
 import VersionPanel from "@src/components/version-panel/VersionPanel.vue";
 import UploadMapDialog from "./UploadMapDialog.vue";
+import { renameAllMapItemIds } from "@src/utils/tools";
 
 const editorStore = useEditorStore();
 const versionStore = useVersionStore();
@@ -17,6 +18,10 @@ const modLabel = navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl";
 
 const mcpPanelVisible = ref(false);
 const mcpPanelRef = ref();
+
+// 重命名全部 MapItem ID 的确认对话框
+const renameConfirmVisible = ref(false);
+const renameMapItemCount = ref(0);
 
 // 升级对话框
 const upgradeVisible = ref(false);
@@ -71,6 +76,36 @@ async function handleFileMenuClick({ key }: { key: FileMenuKey }) {
 			uploadMapVisible.value = true;
 			break;
 	}
+}
+
+// ─── 工具下拉菜单项点击处理 ───
+type ToolMenuKey = "rename-map-item-ids";
+function handleToolMenuClick({ key }: { key: ToolMenuKey }) {
+	switch (key) {
+		case "rename-map-item-ids":
+			// 执行前先向用户说明修改内容与可能的影响，确认后再执行
+			renameMapItemCount.value = useMapDataStore().mapItems.length;
+			renameConfirmVisible.value = true;
+			break;
+	}
+}
+
+// ─── 执行：重命名全部 MapItem ID（标准格式） ───
+function handleRenameMapItemIds() {
+	renameConfirmVisible.value = false;
+	const mapDataStore = useMapDataStore();
+	const result = renameAllMapItemIds();
+	// map item ID 是渲染场景的 key，重命名后需重新加载地图
+	eventBus.emit("map-loaded", mapDataStore.$state);
+	let tip = `已将 ${result.renamedCount} 个 MapItem 的 ID 重命名为标准格式`;
+	if (result.removedDanglingPaths > 0 || result.removedDanglingIndexIds > 0 || result.startMapItemIdFallback) {
+		const cleaned: string[] = [];
+		if (result.removedDanglingPaths > 0) cleaned.push(`移除 ${result.removedDanglingPaths} 条悬空路径`);
+		if (result.removedDanglingIndexIds > 0) cleaned.push(`清理 ${result.removedDanglingIndexIds} 个悬空索引引用`);
+		if (result.startMapItemIdFallback) cleaned.push("起点已回退到有效节点");
+		tip += `；${cleaned.join("，")}`;
+	}
+	message.success(tip, 4);
 }
 
 // ─── 打开项目文件夹 ───
@@ -362,6 +397,19 @@ function handleReloadMap() {
 				</template>
 			</a-dropdown>
 
+			<!-- 工具下拉菜单 -->
+			<a-dropdown trigger="['click']">
+				<a-button class="menu-button" size="small" type="text">
+					<span>工具</span>
+					<font-awesome-icon icon="fa-solid fa-chevron-down" style="font-size: 0.8em; margin-left: 4px" />
+				</a-button>
+				<template #overlay>
+					<a-menu @click="handleToolMenuClick">
+						<a-menu-item key="rename-map-item-ids">重命名全部 MapItem ID（标准格式）</a-menu-item>
+					</a-menu>
+				</template>
+			</a-dropdown>
+
 			<!-- 恢复删除 -->
 			<a-button v-if="editorStore.canUndoDelete" @click="handleUndoDelete" class="menu-button" size="small" type="text">
 				<span>恢复删除 ({{ modLabel }}+Z)</span>
@@ -426,6 +474,33 @@ function handleReloadMap() {
 	>
 		<p>当前地图为旧版单文件格式，升级后可使用 Git 版本管理和代码对比功能。</p>
 	</a-modal>
+
+	<!-- 重命名全部 MapItem ID 的确认提醒 -->
+	<a-modal
+		v-model:open="renameConfirmVisible"
+		title="重命名全部 MapItem ID"
+		@ok="handleRenameMapItemIds"
+		ok-text="确认重命名"
+		cancel-text="取消"
+		width="560px"
+	>
+		<div class="rename-confirm-content">
+			<p class="rename-confirm-section"><b>修改内容：</b></p>
+			<ul>
+				<li>所有 MapItem 的 ID 将重新生成为标准格式（<code>mi-xxxxxx</code>），共 {{ renameMapItemCount }} 个；</li>
+				<li>地图内部引用会自动同步更新：MapItem 互链（linkto / beLinked）、地图路径（mapPaths）、地图起点（startMapItemId）、旧版路径索引（mapIndex）；</li>
+				<li>存在悬空引用（指向不存在 MapItem 的旧 ID）时自动清理：悬空路径移除、索引悬空引用清理、起点回退到有效节点。</li>
+			</ul>
+			<p class="rename-confirm-section"><b>可能的影响：</b></p>
+			<ul>
+				<li>
+					游戏代码（角色 initCode、机会卡 / 地图事件 effectCode、游戏阶段、修饰器模板、自定义 UI、额外库 extraLibs 等）中若硬编码引用了旧 ID，
+					<b>不会自动更新</b>，需要手动同步；
+				</li>
+				<li>操作会修改全部 MapItem 的 ID，建议先保存或确认已有版本记录后再执行。</li>
+			</ul>
+		</div>
+	</a-modal>
 </template>
 
 <style lang="scss" scoped>
@@ -481,6 +556,23 @@ function handleReloadMap() {
 
 	&.stopped {
 		background-color: #d9d9d9;
+	}
+}
+
+.rename-confirm-content {
+	ul {
+		padding-left: 20px;
+		margin: 0;
+		line-height: 1.9;
+		color: rgba(0, 0, 0, 0.85);
+	}
+
+	.rename-confirm-section {
+		margin: 12px 0 4px;
+
+		&:first-child {
+			margin-top: 0;
+		}
 	}
 }
 </style>

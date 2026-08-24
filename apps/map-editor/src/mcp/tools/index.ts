@@ -21,6 +21,7 @@ export { extraLibsTools } from "./extra-libs.js";
 export { typeLibsTools } from "./type-libs.js";
 export { resourceTools } from "./resources.js";
 export { mapItemTools } from "./map-items.js";
+export { mapPathTools } from "./map-paths.js";
 export { mapChangeTools } from "./map-changes.js";
 export { propertyTools } from "./properties.js";
 export { gameSettingTools } from "./game-settings.js";

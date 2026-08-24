@@ -22,19 +22,29 @@ import type { MapEvent } from "./validators/map-event-validators";
 import type { FormSchema } from "@mine-monopoly/types";
 import { useMonacoValidator } from "@src/components/code-editor/composables/useMonacoValidator";
 
-/**
- * Map Content Service class
- */
-export class MapContentService {
-	private formatValidationErrors(errors: Array<{ line: number; column: number; message: string }>): string {
-		return errors
+export interface CodeValidationOptions {
+	skipCodeValidation?: boolean;
+}
+
+export class CodeValidationError extends Error {
+	constructor(
+		label: string,
+		public readonly errors: Array<{ line: number; column: number; message: string }>,
+	) {
+		super(`${label} TS 校验失败:\n${errors
 			.map((error) => {
 				const lineLabel = error.line > 0 ? `L${error.line}` : "模板";
 				return `${lineLabel}:C${error.column} ${error.message}`;
 			})
-			.join("\n");
+			.join("\n")}`);
+		this.name = "CodeValidationError";
 	}
+}
 
+/**
+ * Map Content Service class
+ */
+export class MapContentService {
 	private async ensureCodeValid(
 		data: {
 			code: string;
@@ -49,7 +59,7 @@ export class MapContentService {
 		if (!data.code?.trim()) return;
 		const validation = await this.validateEffectCode(data);
 		if (!validation.valid) {
-			throw new Error(`${label} TS 校验失败:\n${this.formatValidationErrors(validation.errors)}`);
+			throw new CodeValidationError(label, validation.errors);
 		}
 	}
 
@@ -62,18 +72,20 @@ export class MapContentService {
 	 * @param data - Chance card data without id
 	 * @returns The created chance card with generated id
 	 */
-	async addChanceCard(data: Omit<ChanceCard, "id">): Promise<ChanceCard> {
+	async addChanceCard(data: Omit<ChanceCard, "id">, options: CodeValidationOptions = {}): Promise<ChanceCard> {
 		// 1. Validate input data
 		const validated = AddChanceCardSchema.parse(data);
-		await this.ensureCodeValid(
-			{
-				code: validated.effectCode,
-				codeType: "chance-card",
-				targetType: validated.type,
-				mode: "full",
-			},
-			"机会卡 effectCode",
-		);
+		if (!options.skipCodeValidation) {
+			await this.ensureCodeValid(
+				{
+					code: validated.effectCode,
+					codeType: "chance-card",
+					targetType: validated.type,
+					mode: "full",
+				},
+				"机会卡 effectCode",
+			);
+		}
 
 		// 2. Get Store instances
 		const mapDataStore = useMapDataStore();
@@ -119,18 +131,20 @@ export class MapContentService {
 	 * @param data - Chance card data with id
 	 * @returns The updated chance card
 	 */
-	async updateChanceCard(data: ChanceCard): Promise<ChanceCard> {
+	async updateChanceCard(data: ChanceCard, options: CodeValidationOptions = {}): Promise<ChanceCard> {
 		// 1. Validate input
 		const validated = UpdateChanceCardSchema.parse(data);
-		await this.ensureCodeValid(
-			{
-				code: validated.effectCode,
-				codeType: "chance-card",
-				targetType: validated.type,
-				mode: "full",
-			},
-			"机会卡 effectCode",
-		);
+		if (!options.skipCodeValidation) {
+			await this.ensureCodeValid(
+				{
+					code: validated.effectCode,
+					codeType: "chance-card",
+					targetType: validated.type,
+					mode: "full",
+				},
+				"机会卡 effectCode",
+			);
+		}
 
 		// 2. Check if exists
 		const mapDataStore = useMapDataStore();
@@ -207,17 +221,19 @@ export class MapContentService {
 	 * @param data - Role data without id
 	 * @returns The created role with generated id
 	 */
-	async addRole(data: Omit<Role, "id">): Promise<Role> {
+	async addRole(data: Omit<Role, "id">, options: CodeValidationOptions = {}): Promise<Role> {
 		// 1. Validate input data
 		const validated = AddRoleSchema.parse(data);
-		await this.ensureCodeValid(
-			{
-				code: validated.initCode || "",
-				codeType: "role",
-				mode: "full",
-			},
-			"角色 initCode",
-		);
+		if (!options.skipCodeValidation) {
+			await this.ensureCodeValid(
+				{
+					code: validated.initCode || "",
+					codeType: "role",
+					mode: "full",
+				},
+				"角色 initCode",
+			);
+		}
 
 		// 2. Get Store instances
 		const mapDataStore = useMapDataStore();
@@ -262,17 +278,19 @@ export class MapContentService {
 	 * @param data - Role data with roleId
 	 * @returns The updated role
 	 */
-	async updateRole(data: z.infer<typeof UpdateRoleSchema>): Promise<Role> {
+	async updateRole(data: z.infer<typeof UpdateRoleSchema>, options: CodeValidationOptions = {}): Promise<Role> {
 		// 1. Validate input
 		const validated = UpdateRoleSchema.parse(data);
-		await this.ensureCodeValid(
-			{
-				code: validated.initCode || "",
-				codeType: "role",
-				mode: "full",
-			},
-			"角色 initCode",
-		);
+		if (!options.skipCodeValidation) {
+			await this.ensureCodeValid(
+				{
+					code: validated.initCode || "",
+					codeType: "role",
+					mode: "full",
+				},
+				"角色 initCode",
+			);
+		}
 
 		// 2. Check if exists and get current data
 		const mapDataStore = useMapDataStore();
@@ -344,17 +362,19 @@ export class MapContentService {
 	 * @param data - Map event data without id
 	 * @returns The created map event with generated id
 	 */
-	async addMapEvent(data: Omit<MapEvent, "id">): Promise<MapEvent> {
+	async addMapEvent(data: Omit<MapEvent, "id">, options: CodeValidationOptions = {}): Promise<MapEvent> {
 		// 1. Validate input data
 		const validated = AddMapEventSchema.parse(data);
-		await this.ensureCodeValid(
-			{
-				code: validated.effectCode,
-				codeType: "map-event",
-				mode: "full",
-			},
-			"地图事件 effectCode",
-		);
+		if (!options.skipCodeValidation) {
+			await this.ensureCodeValid(
+				{
+					code: validated.effectCode,
+					codeType: "map-event",
+					mode: "full",
+				},
+				"地图事件 effectCode",
+			);
+		}
 
 		// 2. Get Store instances
 		const mapDataStore = useMapDataStore();
@@ -399,17 +419,19 @@ export class MapContentService {
 	 * @param data - Map event data with id
 	 * @returns The updated map event
 	 */
-	async updateMapEvent(data: MapEvent): Promise<MapEvent> {
+	async updateMapEvent(data: MapEvent, options: CodeValidationOptions = {}): Promise<MapEvent> {
 		// 1. Validate input
 		const validated = UpdateMapEventSchema.parse(data);
-		await this.ensureCodeValid(
-			{
-				code: validated.effectCode,
-				codeType: "map-event",
-				mode: "full",
-			},
-			"地图事件 effectCode",
-		);
+		if (!options.skipCodeValidation) {
+			await this.ensureCodeValid(
+				{
+					code: validated.effectCode,
+					codeType: "map-event",
+					mode: "full",
+				},
+				"地图事件 effectCode",
+			);
+		}
 
 		// 2. Check if exists
 		const mapDataStore = useMapDataStore();
@@ -769,17 +791,19 @@ export class MapContentService {
 	 * Update extra libraries code
 	 * @param code - The new code
 	 */
-	async updateExtraLibs(code: string): Promise<void> {
+	async updateExtraLibs(code: string, options: CodeValidationOptions = {}): Promise<void> {
 		// 1. Validate input
 		const validated = UpdateExtraLibsSchema.parse({ code });
-		await this.ensureCodeValid(
-			{
-				code: validated.code,
-				codeType: "extra-libs",
-				mode: "full",
-			},
-			"额外库代码",
-		);
+		if (!options.skipCodeValidation) {
+			await this.ensureCodeValid(
+				{
+					code: validated.code,
+					codeType: "extra-libs",
+					mode: "full",
+				},
+				"额外库代码",
+			);
+		}
 
 		// 2. Get Store and update
 		const mapDataStore = useMapDataStore();

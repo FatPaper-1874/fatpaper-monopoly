@@ -14,6 +14,16 @@
 
 				<div class="controls">
 					<a-space>
+						<span style="font-size: 12px; color: #666">端口</span>
+						<a-input-number
+							v-model:value="mcpPort"
+							:min="1"
+							:max="65535"
+							:precision="0"
+							:disabled="serverRunning || loading"
+							size="small"
+							style="width: 100px"
+						/>
 						<a-button v-if="!serverRunning" type="primary" size="small" @click="startServer" :loading="loading">
 							<template #icon>
 								<font-awesome-icon style="margin-right: 5px" icon="fa-solid fa-play" />
@@ -71,16 +81,16 @@
 							</template>
 						</a-input>
 
-						<!-- Connection Instruction -->
+						<!-- AI Connection Prompt -->
 						<div class="connection-instruction" style="margin-top: 12px">
 							<div style="font-size: 11px; color: #666; margin-bottom: 4px">
-								使用以下命令连接到 MCP 服务器:
+								复制以下提示语给 AI，让它自动配置 MCP 服务:
 							</div>
 							<a-typography-paragraph
-								:copyable="{ text: connectionCommand }"
-								style="margin: 0; padding: 8px; background: #f5f5f5; border-radius: 4px"
+								:copyable="{ text: connectionPrompt }"
+								style="margin: 0; padding: 8px; background: #f5f5f5; border-radius: 4px; white-space: pre-wrap"
 							>
-								<code style="font-size: 12px">{{ connectionCommand }}</code>
+								<span style="font-size: 12px">{{ connectionPrompt }}</span>
 							</a-typography-paragraph>
 						</div>
 					</div>
@@ -158,6 +168,7 @@ const visible = defineModel({ default: false });
 
 const serverRunning = ref(false);
 const serverUrl = ref<string | null>(null);
+const mcpPort = ref<number>(3000);
 const loading = ref(false);
 const message = ref("");
 const messageType = ref<"success" | "error" | "info">("info");
@@ -241,10 +252,14 @@ const categorizedTools = computed(() => {
 		.sort((a, b) => a.name.localeCompare(b.name, "zh"));
 });
 
-// Compute connection command
-const connectionCommand = computed(() => {
-	if (!serverUrl.value) return '';
-	return `claude mcp add --transport http mine-monopoly-mcp ${serverUrl.value}`;
+// Generate a client-agnostic prompt for AI assistants to configure the MCP server.
+const connectionPrompt = computed(() => {
+	if (!serverUrl.value) return "";
+	return `请帮我为当前 AI 客户端安装并配置名为 mine-monopoly-mcp 的 MCP 服务器。
+
+服务器使用 Streamable HTTP 传输，地址为：${serverUrl.value}
+
+请优先使用你内置的 MCP 安装或配置工具；如果没有，请按当前客户端支持的方式添加此服务器配置。保留已有 MCP 配置不变。配置完成后连接该服务，并调用 check_mcp_connection 工具验证连接是否成功；若需要我授权、重启或手动操作，请明确告诉我。`;
 });
 
 async function startServer() {
@@ -253,13 +268,16 @@ async function startServer() {
 	message.value = "";
 
 	try {
-		console.log("[MCP Vue] Calling mcpAPI.startMCPServer()");
-		const result = await (window as any).mcpAPI?.startMCPServer();
+		console.log("[MCP Vue] Calling mcpAPI.startMCPServer() with port:", mcpPort.value);
+		const result = await (window as any).mcpAPI?.startMCPServer(mcpPort.value);
 		console.log("[MCP Vue] Result from main:", result);
 
 		if (result?.success) {
 			serverRunning.value = true;
 			serverUrl.value = result.url || null;
+			if (typeof result.port === "number") {
+				mcpPort.value = result.port;
+			}
 			console.log("[MCP Vue] Server state updated - running:", serverRunning.value, "url:", serverUrl.value);
 			showMessage(result.message || "MCP 服务器已启动", "success");
 			// Load tools after server starts
@@ -301,6 +319,9 @@ async function refreshStatus() {
 		const result = await (window as any).mcpAPI?.getMCPStatus();
 		serverRunning.value = result?.running || false;
 		serverUrl.value = result?.url || null;
+		if (typeof result?.port === "number") {
+			mcpPort.value = result.port;
+		}
 	} catch (error) {
 		console.error("Failed to get MCP status:", error);
 	}
@@ -335,10 +356,13 @@ onMounted(async () => {
 	// Listen for server status changes from main process
 	if ((window as any).mcpAPI?.onServerStatusChange) {
 		console.log("[MCP Vue] Registering status change listener");
-		cleanupStatusListener = (window as any).mcpAPI.onServerStatusChange((status: { running: boolean; url?: string }) => {
+		cleanupStatusListener = (window as any).mcpAPI.onServerStatusChange((status: { running: boolean; url?: string; port?: number }) => {
 			console.log("[MCP Vue] Status changed:", status);
 			serverRunning.value = status.running;
 			serverUrl.value = status.url || null;
+			if (typeof status.port === "number") {
+				mcpPort.value = status.port;
+			}
 		});
 	} else {
 		console.log("[MCP Vue] ERROR: mcpAPI.onServerStatusChange not available!");

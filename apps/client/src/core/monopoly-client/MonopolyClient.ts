@@ -300,6 +300,14 @@ export class MonopolyClient {
 		return this.sendMsg({ type: SocketMsgType.Operation, source: SocketMsgSource.Client, data: { operateType: OperateType.GameInitFinished, data: undefined }, extra: { initSessionId: this.currentInitSessionId, initStatus: "failed", reason, messageId: crypto.randomUUID() } });
 	}
 
+	public chooseMapPath(requestId: string, pathId: string) {
+		this.sendMsg({
+			type: SocketMsgType.Operation,
+			source: SocketMsgSource.Client,
+			data: { operateType: OperateType.ChooseMapPath, data: { requestId, pathId } },
+		});
+	}
+
 	public rollDice() {
 		// 客户端立即锁定，防止重复点击
 		const utilStore = useUtil();
