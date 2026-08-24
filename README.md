@@ -336,9 +336,13 @@ docker compose -f docker/docker-compose.yml up -d
 ## ⭐ Star History
 
 <div align="center">
-
-[![Star History](https://api.star-history.com/svg?repos=FatPaper-1874/mine-monopoly&type=Date)](https://star-history.com/#FatPaper-1874/mine-monopoly&Date)
-
+<a href="https://www.star-history.com/?repos=FatPaper-1874%2Fmine-monopoly&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=FatPaper-1874/mine-monopoly&type=date&theme=dark&legend=top-left&sealed_token=QvjMRs7oXZPLjXIrU1HAs47y9yVNgeten1s35XZDhWZVHeBr9hFDHOMvf_vxj_Afq-hwD7qBN8a1oEr-E1tE9zmaATtFNtGnoF-i2Q4-AwD_NZrfxaHouzYkZhsAdl8Q9nhSP2Tvd5LkwB30Ncj7dUrbbD0JIlagqmbxBczlOBRzYwZGbesA_2BD_g3n" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=FatPaper-1874/mine-monopoly&type=date&legend=top-left&sealed_token=QvjMRs7oXZPLjXIrU1HAs47y9yVNgeten1s35XZDhWZVHeBr9hFDHOMvf_vxj_Afq-hwD7qBN8a1oEr-E1tE9zmaATtFNtGnoF-i2Q4-AwD_NZrfxaHouzYkZhsAdl8Q9nhSP2Tvd5LkwB30Ncj7dUrbbD0JIlagqmbxBczlOBRzYwZGbesA_2BD_g3n" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=FatPaper-1874/mine-monopoly&type=date&legend=top-left&sealed_token=QvjMRs7oXZPLjXIrU1HAs47y9yVNgeten1s35XZDhWZVHeBr9hFDHOMvf_vxj_Afq-hwD7qBN8a1oEr-E1tE9zmaATtFNtGnoF-i2Q4-AwD_NZrfxaHouzYkZhsAdl8Q9nhSP2Tvd5LkwB30Ncj7dUrbbD0JIlagqmbxBczlOBRzYwZGbesA_2BD_g3n" />
+ </picture>
+</a>
 </div>
 
 ## 支持
