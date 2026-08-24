@@ -53,6 +53,7 @@ input[type="submit"] {
   padding: 0.4rem 1rem;
   color: var(--fp-color-text-white);
   --btn-bg: var(--fp-color-secondary); // 可被子类覆盖的自定义背景色变量
+  --dashed-color: rgba(255, 255, 255, 0.45);
   background-color: var(--btn-bg);
   background-image: var(--fp-texture-felt);
   text-shadow: var(--fp-text-shadow-pressed);
@@ -73,7 +74,7 @@ input[type="submit"] {
     left: 0.25rem;
     right: 0.25rem;
     bottom: 0.25rem;
-    border: 0.2rem dashed rgba(255, 255, 255, 0.45);
+    border: 0.2rem dashed var(--dashed-color);
     border-radius: 0.6rem;
     pointer-events: none;
   }

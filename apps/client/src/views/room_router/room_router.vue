@@ -1,15 +1,12 @@
 <script setup lang="ts">
-import { onBeforeMount, onMounted, computed, ref, onUpdated, nextTick } from "vue";
+import { onBeforeMount, onBeforeUnmount, onMounted, computed, ref, onUpdated, nextTick } from "vue";
 import { useUserInfo, useUserList, useRoomList, useRoomInfo, useLoading } from "@src/store";
-import { useMonopolyClient } from "@src/core/monopoly-client/MonopolyClient";
 import userCard from "@src/components/common/user-card.vue";
 import router from "@src/router";
 import { FPMessage } from "@mine-monopoly/ui";
-import { __FATPAPER_HOST__, __ICE_SERVER_PORT__ } from "@src/../global.config";
 import LoginExtra from "@src/views/login/components/login-extra.vue";
-import FpPopover from "@src/components/utils/fp-popover/fp-popover.vue";
-import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { getRandomPublicRoom } from "@src/utils/api/room-router";
+import OnlineRoomPanel from "./components/online-room-panel.vue";
+import PartyModePanel from "./components/party-mode-panel.vue";
 import { ensureValidAuth } from "@src/utils/api";
 import { throttle } from "@src/utils";
 import { useResourceStore } from "@src/store/game";
@@ -21,9 +18,104 @@ const userInfoStore = useUserInfo();
 const userListStore = useUserList();
 const roomListStore = useRoomList();
 
+type RoomModePanelInstance = {
+	panelElement: HTMLElement | null;
+};
+
 const user = computed(() => userInfoStore);
-const roomId = ref("");
+const activeMode = ref<"online" | "party">("online");
+const isModeSwitching = ref(false);
 const roomRouterRef = ref<HTMLElement | null>(null);
+const onlineRoomPanelRef = ref<RoomModePanelInstance | null>(null);
+const partyModePanelRef = ref<RoomModePanelInstance | null>(null);
+let modeSwitchTimeline: gsap.core.Timeline | undefined;
+
+function switchMode(mode: "online" | "party") {
+	if (mode === activeMode.value || isModeSwitching.value) return;
+
+	const isSwitchingToParty = mode === "party";
+	const direction = isSwitchingToParty ? 1 : -1;
+	const currentPanel = isSwitchingToParty
+		? onlineRoomPanelRef.value?.panelElement
+		: partyModePanelRef.value?.panelElement;
+	const nextPanel = isSwitchingToParty ? partyModePanelRef.value?.panelElement : onlineRoomPanelRef.value?.panelElement;
+	if (!currentPanel || !nextPanel) {
+		activeMode.value = mode;
+		return;
+	}
+
+	isModeSwitching.value = true;
+	activeMode.value = mode;
+	modeSwitchTimeline?.kill();
+	gsap.killTweensOf([currentPanel, nextPanel]);
+
+	if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+		gsap.set(currentPanel, { autoAlpha: 0, pointerEvents: "none" });
+		gsap.set(nextPanel, { autoAlpha: 1, pointerEvents: "auto" });
+		isModeSwitching.value = false;
+		return;
+	}
+
+	const nextContents = nextPanel.querySelectorAll(
+		":scope > .title, :scope > .describe, :scope > form, :scope > .local-party-button",
+	);
+	modeSwitchTimeline = gsap
+		.timeline({
+			defaults: { overwrite: "auto" },
+			onComplete: () => {
+				isModeSwitching.value = false;
+			},
+		})
+		.set(currentPanel, { pointerEvents: "none", transformOrigin: "50% 50%" })
+		.set(nextPanel, {
+			autoAlpha: 0,
+			x: direction * 72,
+			y: 16,
+			rotation: direction * 8,
+			scale: 0.8,
+			pointerEvents: "none",
+			transformOrigin: "50% 50%",
+		})
+		.set(nextContents, { autoAlpha: 0, y: 18, rotation: direction * 2 })
+		.to(currentPanel, {
+			autoAlpha: 0,
+			x: -direction * 54,
+			y: -10,
+			rotation: -direction * 6,
+			scale: 0.82,
+			duration: 0.26,
+			ease: "back.in(1.5)",
+		})
+		.to(
+			nextPanel,
+			{
+				autoAlpha: 1,
+				x: 0,
+				y: 0,
+				rotation: 0,
+				scale: 1,
+				duration: 0.5,
+				ease: "elastic.out(1, 0.58)",
+			},
+			0.1,
+		)
+		.to(
+			nextContents,
+			{
+				autoAlpha: 1,
+				y: 0,
+				rotation: 0,
+				duration: 0.3,
+				ease: "back.out(1.7)",
+				stagger: 0.055,
+			},
+			0.22,
+		)
+		.set(currentPanel, { x: 0, y: 0, rotation: 0, scale: 1, pointerEvents: "none" })
+		.set(nextPanel, { pointerEvents: "auto" });
+}
+
+onBeforeUnmount(() => modeSwitchTimeline?.kill());
 
 onMounted(async () => {
 	// 入场动画
@@ -35,28 +127,30 @@ onMounted(async () => {
 
 		if (!userContainer || !joinRoom) return;
 
-		// 创建 timeline
+		const modePanels = [onlineRoomPanelRef.value?.panelElement, partyModePanelRef.value?.panelElement].filter(
+			(panel): panel is HTMLElement => panel !== null,
+		);
+		gsap.set(modePanels, { autoAlpha: 0, pointerEvents: "none" });
+		if (onlineRoomPanelRef.value?.panelElement) {
+			gsap.set(onlineRoomPanelRef.value.panelElement, { autoAlpha: 1, pointerEvents: "auto" });
+		}
+
+		// 左右面板并行入场，右侧稍后 0.08 秒跟进，避免出现明显空档。
 		const tl = gsap.timeline({ defaults: { ease: "back.out(1.5)" } });
-
-		// 1. 左边容器弹出
-		tl.fromTo(userContainer, { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.4 });
-
-		// 2. 左边容器内容依次弹出
-		tl.fromTo(
-			userContainer.querySelectorAll(":scope > *"),
-			{ y: 20, opacity: 0 },
-			{ y: 0, opacity: 1, stagger: 0.1, duration: 0.3 },
-		);
-
-		// 3. 右边容器弹出
-		tl.fromTo(joinRoom, { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.4 });
-
-		// 4. 右边容器内容依次弹出
-		tl.fromTo(
-			joinRoom.querySelectorAll(":scope > *"),
-			{ y: 20, opacity: 0 },
-			{ y: 0, opacity: 1, stagger: 0.1, duration: 0.3 },
-		);
+		tl.fromTo(userContainer, { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.36 })
+			.fromTo(
+				userContainer.querySelectorAll(":scope > *"),
+				{ y: 20, opacity: 0 },
+				{ y: 0, opacity: 1, stagger: 0.1, duration: 0.3 },
+				0.12,
+			)
+			.fromTo(joinRoom, { scale: 0.84, y: 12, opacity: 0 }, { scale: 1, y: 0, opacity: 1, duration: 0.32 }, 0.08)
+			.fromTo(
+				joinRoom.querySelectorAll(":scope > *"),
+				{ y: 20, opacity: 0 },
+				{ y: 0, opacity: 1, stagger: 0.1, duration: 0.28 },
+				0.2,
+			);
 	});
 	// 清除缓存
 	useResourceStore().clear();
@@ -102,81 +196,6 @@ function handleLogout() {
 	localStorage.removeItem("user");
 	router.replace({ name: "login" });
 }
-
-async function handleJoinRoom(e: Event) {
-	e.preventDefault();
-	const _roomId = roomId.value;
-	if (!_roomId) {
-		FPMessage({ type: "error", message: "请输入房间号" });
-		return;
-	}
-	await joinRoom(_roomId);
-}
-
-async function joinRoom(id: string): Promise<boolean> {
-	// MonopolyClient.joinRoom 内部已吞掉错误并弹提示，这里只负责加载态与结果透传
-	try {
-		const monopolyClient = await useMonopolyClient({
-			iceServer: {
-				host: __FATPAPER_HOST__,
-				port: __ICE_SERVER_PORT__,
-			},
-		});
-		useLoading().showLoading("正在加入房间...");
-		return await monopolyClient.joinRoom(id);
-	} finally {
-		useLoading().hideLoading();
-	}
-}
-
-async function handleCreateLocalParty() {
-	try {
-		const monopolyClient =
-			useMonopolyClient() ??
-			(await useMonopolyClient({
-				iceServer: {
-					host: __FATPAPER_HOST__,
-					port: __ICE_SERVER_PORT__,
-				},
-			}));
-		await monopolyClient.createLocalParty(useUserInfo().username || "本地玩家1");
-		router.push({ name: "room" });
-	} catch (error: any) {
-		FPMessage({ type: "error", message: error?.message || "创建本地派对失败" });
-	}
-}
-
-const randomRoomButtonDisable = ref(false);
-let interval: any;
-async function handleGetRandomPublicRoom(e: Event) {
-	e.preventDefault();
-	if (interval) clearInterval(interval);
-	randomRoomButtonDisable.value = true;
-	interval = setInterval(() => {
-		randomRoomButtonDisable.value = false;
-	}, 1000);
-	try {
-		const res = await getRandomPublicRoom();
-		if ((res as any).roomId) {
-			FPMessage({ type: "success", message: "遇到等待的小伙伴了呢!" });
-			const ok = await joinRoom((res as any).roomId);
-			if (!ok) {
-				// 随机抽中的房间可能刚被关闭/过期：自动换一个房间再试一次
-				FPMessage({ type: "warning", message: "该房间刚关闭，正在为你寻找其他房间…" });
-				const retry = await getRandomPublicRoom();
-				if ((retry as any).roomId) {
-					await joinRoom((retry as any).roomId);
-				} else {
-					FPMessage({ type: "error", message: "暂时没有可加入的公开房间" });
-				}
-			}
-		} else {
-			FPMessage({ type: "error", message: "现在没有公开的房间喔" });
-		}
-	} catch (e: any) {
-		FPMessage({ type: "error", message: e.message || e });
-	}
-}
 </script>
 
 <template>
@@ -193,39 +212,50 @@ async function handleGetRandomPublicRoom(e: Event) {
 					</div>
 				</div>
 				<div class="right-container">
-					<div class="join-room">
-						<div class="title">游戏大厅</div>
-						<div class="describe">
-							·输入房间号可加入房间，第一个使用房间号的将成为主机(房主)<br />
-							·建议使用稍微复杂的房间号(防止误入别人的房间)<br />
-						</div>
-						<form @submit="handleJoinRoom">
-							<input maxlength="12" v-model="roomId" type="text" placeholder="房间号(1-12个字符)" />
-							<button type="submit">加入/创建房间</button>
-							<FpPopover placement="bottom">
-								<template #default>
-									<button
-										class="random-room-button"
-										:disabled="randomRoomButtonDisable"
-										@click="handleGetRandomPublicRoom"
-									>
-										<FontAwesomeIcon :icon="randomRoomButtonDisable ? 'hourglass-half' : 'shuffle'" />
-									</button>
-								</template>
-								<template #content>
-									<div class="tips">寻找随机的公开房间</div>
-								</template>
-							</FpPopover>
-						</form>
+					<div class="mode-tabs" role="tablist" aria-label="大厅模式">
+						<button
+							id="online-room-tab"
+							type="button"
+							class="mode-tab"
+							:class="{ active: activeMode === 'online' }"
+							:aria-selected="activeMode === 'online'"
+							:disabled="isModeSwitching"
+							aria-controls="online-room-panel"
+							role="tab"
+							@click="switchMode('online')"
+						>
+							{{ activeMode === "online" ? "> " : "" }}联机房间
+						</button>
+						<button
+							id="party-mode-tab"
+							type="button"
+							class="mode-tab"
+							:class="{ active: activeMode === 'party' }"
+							:aria-selected="activeMode === 'party'"
+							:disabled="isModeSwitching"
+							aria-controls="party-mode-panel"
+							role="tab"
+							@click="switchMode('party')"
+						>
+							{{ activeMode === "party" ? "> " : "" }}派对模式
+						</button>
 					</div>
 
-					<div class="party-mode">
-						<div class="title">游戏大厅</div>
-						<div class="describe">
-							·输入房间号可加入房间，第一个使用房间号的将成为主机(房主)<br />
-							·建议使用稍微复杂的房间号(防止误入别人的房间)<br />
-						</div>
-						<button type="button" class="local-party-button" @click="handleCreateLocalParty">本地派对</button>
+					<div class="mode-viewport">
+						<OnlineRoomPanel
+							ref="onlineRoomPanelRef"
+							id="online-room-panel"
+							:aria-hidden="activeMode !== 'online'"
+							role="tabpanel"
+							aria-labelledby="online-room-tab"
+						/>
+						<PartyModePanel
+							ref="partyModePanelRef"
+							id="party-mode-panel"
+							:aria-hidden="activeMode !== 'party'"
+							role="tabpanel"
+							aria-labelledby="party-mode-tab"
+						/>
 					</div>
 				</div>
 			</div>
@@ -282,67 +312,53 @@ async function handleGetRandomPublicRoom(e: Event) {
 	}
 
 	.right-container {
+		width: min(34rem, calc(100vw - 20rem));
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: 0.7rem;
 
-		.title {
-			display: inline-block;
-			font-size: 1.6rem;
-			color: var(--fp-color-primary);
-			margin-bottom: 0.7rem;
-			background-color: rgba(255, 255, 255, 0.45);
-			padding: 0.4rem 0.8rem;
-			border-radius: 1rem;
-		}
-
-		.describe {
-			font-size: 0.9rem;
-			color: #393939;
-			margin-bottom: 0.8rem;
-			padding-left: 0.8rem;
-		}
-	}
-
-	.join-room {
-		@include felt-patch(#ffedb7);
-		padding: 1.8rem;
-		border-radius: 2rem;
-
-		& form {
+		.mode-tabs {
 			display: flex;
-			justify-content: space-around;
+			gap: 0.5rem;
+			padding: 0 0.4rem;
+		}
 
-			& .random-room-button {
-				width: 3rem;
-				padding: 0 0.6rem;
+		.mode-tab {
+			--btn-bg: var(--fp-color-bg-light);
+			--dashed-color: rgba(206, 206, 206, 0.65);
+			// flex: 1;
+			width: 10rem;
+			height: 2.6rem;
+			color: #6b6251;
+			transition:
+				color 0.2s ease,
+				background-color 0.2s ease,
+				transform 0.2s ease;
+
+			&:disabled {
+				opacity: 1;
+				filter: none;
+				cursor: default;
 			}
 
-			& .tips {
-				width: max-content;
-				font-size: 1.1rem;
-				border-radius: 0.7rem;
-				padding: 0.2rem;
-				color: var(--fp-color-primary);
-				text-shadow: var(--fp-text-shadow);
+			&.active {
+				--btn-bg: var(--fp-color-secondary);
+				--dashed-color: rgba(255, 255, 255, 0.65);
+				color: #fff;
+				transform: translateY(-0.1rem);
 			}
 		}
 
-		& input {
-			height: 3rem;
+		.mode-viewport {
+			display: grid;
 		}
 
-		& button {
-			margin-left: 0.5rem;
-			border-radius: 0.7rem;
-			height: 3rem;
+		.mode-page {
+			grid-area: 1 / 1;
+			visibility: hidden;
+			opacity: 0;
+			pointer-events: none;
 		}
-	}
-
-	.party-mode {
-		@include felt-patch(#ffedb7);
-		padding: 1.8rem;
-		border-radius: 2rem;
 	}
 }
 </style>
