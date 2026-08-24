@@ -6,7 +6,7 @@ type MessageOptions = {
 };
 
 import fpMessageVue from "./fp-message.vue";
-import { App, ComponentPublicInstance, createApp, ref, watch, WatchStopHandle, nextTick } from "vue";
+import { App, ComponentPublicInstance, createApp, ref, nextTick } from "vue";
 
 // 扩展类型定义
 interface FPMessageInstance extends ComponentPublicInstance {
@@ -30,36 +30,26 @@ function showMessage(app: App, delay: number, onClosedFn: Function | undefined) 
 	const targetDocument = document.querySelector("#fpmessage-container") || document.body;
 	targetDocument.appendChild(container);
 
-	// 等待 DOM 渲染后计算位置
-	nextTick(() => {
+	// v-show 隐藏时 offsetHeight 为 0；先显示并等待 DOM 更新，再按实际高度排布。
+	nextTick(async () => {
+		void vm.setVisible(true);
+		await nextTick();
 		updatePositions();
-		vm.setVisible(true);
 	});
 
-	const stopHandle = watch(
-		itemQueue,
-		() => {
-			// 队列变化时重新计算
-			nextTick(() => {
-				updatePositions();
-			});
-		},
-		{ deep: true },
-	);
-
 	let timer: any = setTimeout(async () => {
-		await hideMessage(app, vm, stopHandle);
+		await hideMessage(app, vm);
 		if (onClosedFn) onClosedFn();
 		clearTimeout(timer);
 		timer = -1;
 	}, delay);
 }
 
-const hideMessage = async (app: App, vm: FPMessageInstance, stopHandle: WatchStopHandle) => {
+const hideMessage = async (app: App, vm: FPMessageInstance) => {
 	await vm.setVisible(false);
-	stopHandle();
 	app.unmount();
 	itemQueue.value = itemQueue.value.filter((item) => item !== vm);
+	updatePositions();
 };
 
 // 获取当前 1rem 对应的像素值

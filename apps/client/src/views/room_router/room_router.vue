@@ -312,7 +312,7 @@ function handleLogout() {
 	}
 
 	.right-container {
-		width: min(34rem, calc(100vw - 20rem));
+		// width: min(34rem, calc(100vw - 20rem));
 		display: flex;
 		flex-direction: column;
 		gap: 0.7rem;

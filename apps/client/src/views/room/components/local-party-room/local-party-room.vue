@@ -199,11 +199,12 @@ function handleGameSettingChange(gameSetting: Record<string, { field: FormSchema
 
 async function checkSaves() {
 	if (!currentMap.value) {
-		saveRecords.value = await saveManager.list();
-	} else {
-		const version = useMapData().info?.version ?? "0.0.0";
-		saveRecords.value = await saveManager.listByMap(roomInfoStore.mapId, version);
+		saveRecords.value = [];
+		return;
 	}
+
+	const version = useMapData().info?.version ?? "0.0.0";
+	saveRecords.value = await saveManager.listByMap(roomInfoStore.mapId, version);
 	saveRecords.value.sort((a, b) => b.saveTime - a.saveTime);
 }
 
