@@ -13,7 +13,8 @@ import {
 	DiceResult,
 	MapMovementSegment,
 } from "@mine-monopoly/types";
-import { useChat, useDeviceStatus, useLoading, useSettig, useUserInfo, useUtil } from "@src/store";
+import { useChat, useDeviceStatus, useLoading, useSettig, useUtil } from "@src/store";
+import { getCurrentClientPlayerId } from "@src/store/local-party";
 import { Component, ComponentPublicInstance, createApp, watch, WatchStopHandle } from "vue";
 import { loadItemTypeModules } from "@src/utils/three/itemtype-loader";
 import { useMonopolyClient } from "@src/core/monopoly-client/MonopolyClient";
@@ -320,7 +321,6 @@ export class GameRenderer {
 		this.focusMe();
 		this.pathChoiceController.setRequest(useGameData().mapPathChoiceRequest);
 
-		const userInfoStore = useUserInfo();
 
 		//添加光线投射用于选择对象
 		const propertyRaycaster = new THREE.Raycaster();
@@ -1591,7 +1591,7 @@ export class GameRenderer {
 				await playerEntity.load(modelResource.url, modelResource.fileType);
 				this.playerEntities.set(playerInfo.id, playerEntity);
 				const textSprite = new TextSprite(
-					`${playerInfo.user.username}${playerInfo.user.userId === useUserInfo().userId ? " (你)" : ""}`,
+					`${playerInfo.user.username}${playerInfo.user.userId === getCurrentClientPlayerId() ? " (你)" : ""}`,
 					32,
 					playerInfo.user.color,
 					5,
@@ -2406,7 +2406,7 @@ export class GameRenderer {
 	}
 
 	private resolvePreferredFocusPlayerId(): string | null {
-		const userId = useUserInfo().userId;
+		const userId = getCurrentClientPlayerId();
 		if (this.playerEntities.has(userId)) {
 			return userId;
 		}
@@ -2437,7 +2437,7 @@ export class GameRenderer {
 		this.updateCamera(this.controls, this.currentFocusModule, 8, 30);
 		this.controls.update();
 
-		console.log(`[相机] 相机已聚焦到 ${focusPlayerId === useUserInfo().userId ? "自己的" : "观战目标"} 视角`);
+		console.log(`[相机] 相机已聚焦到 ${focusPlayerId === getCurrentClientPlayerId() ? "自己的" : "观战目标"} 视角`);
 	}
 
 	private createPopoverOnPlayerTop(

@@ -66,6 +66,10 @@ interface UserInRoom extends UserInRoomInfo {
  */
 const MAP_CHUNK_BIN_TYPE = 1;
 
+export interface RoomOptions {
+	localParty?: boolean;
+}
+
 export class Room {
 	private mapInfo: RoomMapInfo | undefined;
 	/** 每个自定义地图加载会话中，客机已报告的本地匹配状态。 */
@@ -75,6 +79,7 @@ export class Room {
 	/** 已确认走旧分块协议的客户端；它们不会携带地图加载会话标识。 */
 	private legacyCustomMapClients = new Map<string, string>();
 	private roomId: string;
+	private readonly localParty: boolean;
 	private userList: Map<string, UserInRoom>;
 	private aiUserList: Map<string, UserInRoomInfo>;
 	private ownerId: string = "";
@@ -142,8 +147,9 @@ export class Room {
 		"#f59e0b",
 	];
 
-	constructor(roomId: string) {
+	constructor(roomId: string, options: RoomOptions = {}) {
 		this.roomId = roomId;
+		this.localParty = options.localParty === true;
 		this.ownerId = "";
 		this.ownerSpectatorMode = false;
 		this.isStarted = false;
@@ -172,12 +178,20 @@ export class Room {
 		return this.ownerId;
 	}
 
+	/** 当前房间已加载的地图描述，仅供本地派对存档恢复复用。 */
+	public getMapInfo(): RoomMapInfo | undefined {
+		return this.mapInfo;
+	}
+
 	public getUserList(): UserInRoom[] {
 		return Array.from(this.userList.values());
 	}
 
 	public isAiPlayer(userId: string): boolean {
 		return this.aiUserList.has(userId);
+	}
+	public getSeatUserCount(): number {
+		return this.getSeatUsers().length;
 	}
 
 	public addAiPlayer(): { success: boolean; error?: string } {
@@ -226,6 +240,28 @@ export class Room {
 		});
 		this.roomInfoBroadcast();
 		return true;
+	}
+	public updateWaitingUserName(userId: string, username: string): { success: boolean; error?: string } {
+		if (this.isStarted) return { success: false, error: "游戏开始后不能修改玩家名称" };
+		const user = this.userList.get(userId);
+		if (!user) return { success: false, error: "本地玩家不存在" };
+		const nextName = username.trim();
+		if (!nextName) return { success: false, error: "玩家名称不能为空" };
+		const duplicated = Array.from(this.userList.values()).some((item) => item.userId !== userId && item.username.trim() === nextName);
+		if (duplicated) return { success: false, error: "玩家名称不能重复" };
+		user.username = nextName;
+		this.roomInfoBroadcast();
+		return { success: true };
+	}
+
+	public removeWaitingUser(userId: string): { success: boolean; error?: string } {
+		if (this.isStarted) return { success: false, error: "游戏开始后不能移除玩家" };
+		if (userId === this.ownerId) return { success: false, error: "不能移除本地派对房主" };
+		if (!this.userList.has(userId)) return { success: false, error: "本地玩家不存在" };
+		if (this.userList.size <= 1) return { success: false, error: "本地派对至少需要一名真人玩家" };
+		this.userList.delete(userId);
+		this.roomInfoBroadcast();
+		return { success: true };
 	}
 
 	private getRoomUserInfo(user: UserInRoom): UserInRoomInfo {
@@ -307,6 +343,24 @@ export class Room {
 				return false;
 			}
 		}
+		this.roomInfoBroadcast();
+		return true;
+	}
+
+	/** 本地派对加载地图后，为所有参与对局的玩家分配随机角色。 */
+	public randomizeRolesForAllPlayers(): boolean {
+		if (useMapData().roles.length === 0) return false;
+
+		for (const userId of this.getParticipatingHumanUserIds()) {
+			const user = this.userList.get(userId);
+			const roleId = this.getRandomRoleId();
+			if (!user || !roleId) return false;
+			user.roleId = roleId;
+		}
+		for (const aiUser of this.aiUserList.values()) {
+			if (!this.assignRandomRoleToAiUser(aiUser)) return false;
+		}
+
 		this.roomInfoBroadcast();
 		return true;
 	}
@@ -712,8 +766,8 @@ export class Room {
 			});
 			this.roomInfoBroadcast();
 
-			// 如果房间已有地图，向新玩家发送地图信息
-			if (this.mapInfo) {
+			// 本地派对所有真人共用一个已加载的 UI 地图；新加入玩家不需要再次传输或确认。
+			if (this.mapInfo && !this.localParty) {
 				// 如果是自定义地图，需要玩家确认风险
 				if (this.mapInfo.from === "custom") {
 					// 发送确认对话框
@@ -875,7 +929,9 @@ export class Room {
 			this.legacyCustomMapClients.clear();
 			//如果地图来源为玩家 (有风险的)
 			//需要其他玩家确定
-			const otherPlayers = Array.from(this.userList.values()).filter((user) => user.userId !== this.ownerId);
+			const otherPlayers = this.localParty
+				? []
+				: Array.from(this.userList.values()).filter((user) => user.userId !== this.ownerId);
 
 			if (otherPlayers.length === 0) {
 				this.roomBroadcast({
@@ -886,7 +942,11 @@ export class Room {
 				this.mapInfo = data;
 				sendChangeMapMessage();
 			} else {
-				const promiseArr = otherPlayers.map((user, index) => {
+				// 先注册确认监听，再发送弹窗；本地同步连接也不会错过即时回应。
+				const promiseArr = otherPlayers.map((user) =>
+					this.operationListener.onceAsync(user.userId, OperateType.ConfirmDialogResult),
+				);
+				for (const user of otherPlayers) {
 					this.sendToClient(user.socketClient, SocketMsgType.ConfirmDialog, {
 						playerId: user.userId,
 						option: {
@@ -898,8 +958,7 @@ export class Room {
 							cancelText: "不同意",
 						},
 					});
-					return this.operationListener.onceAsync(user.userId, OperateType.ConfirmDialogResult);
-				});
+				}
 
 				const res = await Promise.all(promiseArr);
 				if (res.some((r) => !r.confirm)) {
@@ -929,7 +988,7 @@ export class Room {
 		}
 
 		function sendChangeMapMessage() {
-			_this.userList.forEach((u) => (u.isReady = false));
+			_this.userList.forEach((u) => (u.isReady = _this.localParty));
 			// 房间快照不能继续携带上一张地图的参数；新地图加载后由房主同步其默认值。
 			_this.gameSetting = {};
 			// 自定义地图先发送描述，由客机本地命中或按需请求分块传输。
@@ -944,30 +1003,32 @@ export class Room {
 		}
 	}
 
-	public changeColor(_userId: string, color: string): void {
+	public changeColor(_userId: string, color: string): { success: boolean; error?: string } {
 		const user = this.userList.get(_userId);
 		if (user) {
 			user.color = color;
 			this.roomInfoBroadcast();
-			return;
+			return { success: true };
 		}
 		const aiUser = this.aiUserList.get(_userId);
-		if (!aiUser) return;
+		if (!aiUser) return { success: false, error: "玩家不存在" };
 		aiUser.color = color;
 		this.roomInfoBroadcast();
+		return { success: true };
 	}
 
-	public changeRole(_userId: string, roleId: string): void {
+	public changeRole(_userId: string, roleId: string): { success: boolean; error?: string } {
 		const user = this.userList.get(_userId);
 		if (user) {
 			user.roleId = roleId;
 			this.roomInfoBroadcast();
-			return;
+			return { success: true };
 		}
 		const aiUser = this.aiUserList.get(_userId);
-		if (!aiUser) return;
+		if (!aiUser) return { success: false, error: "玩家不存在" };
 		aiUser.roleId = roleId;
 		this.roomInfoBroadcast();
+		return { success: true };
 	}
 
 	public updateAIPlayerName(userId: string, username: string): { success: boolean; error?: string } {
@@ -1117,6 +1178,15 @@ export class Room {
 	}
 
 	public async startGame() {
+		if (!this.mapInfo) {
+			this.roomBroadcast({
+				type: SocketMsgType.MsgNotify,
+				source: SocketMsgSource.Server,
+				data: undefined,
+				msg: { type: "warning", content: "请先选择地图" },
+			});
+			return;
+		}
 		const aiReadyResult = this.ensureAiPlayersReadyForStart();
 		if (!aiReadyResult.success) {
 			this.roomBroadcast({
@@ -1149,7 +1219,7 @@ export class Room {
 		// 上报游戏开始状态和地图信息到服务端
 		const mapId = this.mapInfo?.from === "server" ? this.mapInfo.data : useMapData().id;
 		const mapName = useMapData().info?.name || null;
-		setRoomStarted(this.getRoomId(), true, mapId, mapName);
+		if (!this.localParty) setRoomStarted(this.getRoomId(), true, mapId, mapName);
 
 		// 状态转换: Uninitialized -> Initializing
 		this.transitionTo(WorkerState.Initializing, "开始创建游戏进程");
@@ -1197,9 +1267,9 @@ export class Room {
 	};
 	}
 	private async handleGameOver() {
-		await setRoomStarted(this.getRoomId(), false);
+		if (!this.localParty) await setRoomStarted(this.getRoomId(), false);
 		Array.from(this.userList.values()).forEach((u) => {
-			u.isReady = false;
+			u.isReady = this.localParty;
 		});
 		this.aiUserList.forEach((u) => {
 			u.isReady = true;
@@ -1491,6 +1561,7 @@ export class Room {
 	}
 
 	public async loadSave(record: SaveRecord, usePrevious: boolean = false): Promise<{ success: boolean; error?: string }> {
+		if (!this.mapInfo) return { success: false, error: "请先加载与存档匹配的地图" };
 		const snapshot = usePrevious ? record.previousSnapshot : record.snapshot;
 		if (!snapshot) return { success: false, error: "没有可用的存档数据" };
 
@@ -2130,7 +2201,7 @@ export class Room {
 
 		// 重置所有玩家准备状态
 		Array.from(this.userList.values()).forEach((u) => {
-			u.isReady = false;
+			u.isReady = this.localParty;
 		});
 		this.roomInfoBroadcast();
 	}
@@ -2261,7 +2332,7 @@ export class Room {
 
 		// 重置所有玩家准备状态
 		Array.from(this.userList.values()).forEach((u) => {
-			u.isReady = false;
+			u.isReady = this.localParty;
 		});
 		this.roomInfoBroadcast();
 	}

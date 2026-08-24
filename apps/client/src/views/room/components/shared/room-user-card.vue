@@ -15,8 +15,14 @@ import {
 import { useUserInfo, useRoomInfo } from "@src/store";
 import { useMapData, useResourceStore } from "@src/store/game";
 
-const props = defineProps<{ user: UserInRoomInfo | undefined; addAiButton?: boolean }>();
-const emits = defineEmits(["role-select", "add-ai", "spectator-toggle"]);
+const props = defineProps<{
+	user: UserInRoomInfo | undefined;
+	addAiButton?: boolean;
+	addButtonText?: string;
+	localParty?: boolean;
+	localPartyAddActions?: boolean;
+}>();
+const emits = defineEmits(["role-select", "add-ai", "add-local-player", "spectator-toggle"]);
 
 const user = computed(() => props.user);
 const lightColor = computed(() => (user.value ? lightenColor(user.value.color, 15) : "#ffffff"));
@@ -26,16 +32,21 @@ const avatarSrc = computed(() => {
 
 const isMe = computed(() => (user.value ? user.value.userId === useUserInfo().userId : false));
 const isRoomOwner = computed(() => (user.value ? user.value.userId === useRoomInfo().ownerId : false));
-const amIRoomOwner = computed(() => useRoomInfo().amIRoomOwner);
+const amIRoomOwner = computed(() => props.localParty || useRoomInfo().amIRoomOwner);
 const isAIPlayer = computed(() => Boolean(user.value?.isAI));
 const isSpectator = computed(() => Boolean(user.value?.isSpectator));
 const canEnterSpectator = computed(() => Boolean(user.value) && isMe.value && isRoomOwner.value && !isSpectator.value);
-const canChangeColor = computed(() => !isSpectator.value && (isMe.value || (amIRoomOwner.value && isAIPlayer.value)));
+const canChangeColor = computed(() => !isSpectator.value && (props.localParty || isMe.value || (amIRoomOwner.value && isAIPlayer.value)));
 const canEditAI = computed(() => Boolean(user.value) && amIRoomOwner.value && isAIPlayer.value);
-
-const canSelectRole = computed(
-	() => !isSpectator.value && useMapData().roles.length > 0 && (isMe.value || (amIRoomOwner.value && isAIPlayer.value)),
+const canEditLocalPlayerName = computed(
+	() => Boolean(props.localParty && user.value && !isAIPlayer.value && !isSpectator.value),
 );
+
+const canSelectRole = computed(() => {
+	if (isSpectator.value || useMapData().roles.length === 0) return false;
+	if (props.localParty) return true;
+	return isMe.value || (amIRoomOwner.value && isAIPlayer.value);
+});
 const role = computed(() => {
 	if (!user.value) return undefined;
 	return useMapData().getRoleById(user.value?.roleId);
@@ -47,6 +58,9 @@ const roleImageUrl = computed(() => {
 });
 
 const colorPickerEl = ref<HTMLInputElement | null>(null);
+const localPlayerNameEditorVisible = ref(false);
+const localPlayerNameSubmitting = ref(false);
+const tempLocalPlayerName = ref("");
 const aiEditorVisible = ref(false);
 const aiEditorLoading = ref(false);
 const aiEditorSubmitting = ref(false);
@@ -58,6 +72,15 @@ const roomDefaultProfileLabel = ref("跟随房间默认配置");
 const remoteProfiles = ref<Array<{ id: string; name: string }>>([]);
 
 const aiProfileOptions = computed(() => [{ id: "", name: roomDefaultProfileLabel.value }, ...remoteProfiles.value]);
+const canSubmitLocalPlayerName = computed(() => {
+	const nextName = tempLocalPlayerName.value.trim();
+	return (
+		canEditLocalPlayerName.value &&
+		!localPlayerNameSubmitting.value &&
+		Boolean(nextName) &&
+		nextName !== user.value?.username
+	);
+});
 
 const canSubmitAIEdit = computed(() => {
 	if (!canEditAI.value || aiEditorLoading.value || aiEditorSubmitting.value) return false;
@@ -88,6 +111,33 @@ function handleColorChange(e: Event) {
 	const newColor = target.value;
 	const monopolyClient = useMonopolyClient();
 	monopolyClient.changeColorForUser(props.user.userId, newColor);
+}
+
+function openLocalPlayerNameEditor() {
+	if (!canEditLocalPlayerName.value || !props.user) return;
+	tempLocalPlayerName.value = props.user.username;
+	localPlayerNameEditorVisible.value = true;
+}
+
+function handleSubmitLocalPlayerName() {
+	if (!props.user || !canSubmitLocalPlayerName.value) return;
+
+	localPlayerNameSubmitting.value = true;
+	try {
+		const result = useMonopolyClient().updateLocalPartyPlayerName(props.user.userId, tempLocalPlayerName.value.trim());
+		if (!result.success) {
+			FpMessage({ type: "error", message: result.error || "修改玩家名称失败" });
+			return;
+		}
+		localPlayerNameEditorVisible.value = false;
+		FpMessage({ type: "success", message: "玩家名称已更新" });
+	} finally {
+		localPlayerNameSubmitting.value = false;
+	}
+}
+
+function handleAddLocalPlayer() {
+	emits("add-local-player");
 }
 
 function handleAddAi() {
@@ -167,9 +217,19 @@ async function handleSubmitAIEdit() {
 
 <template>
 	<div class="room-user-card">
-		<button v-if="addAiButton && !user" type="button" class="add-ai-button" @click="handleAddAi">
+		<div v-if="localPartyAddActions && !user" class="add-player-actions">
+			<button type="button" class="add-ai-button" @click="handleAddLocalPlayer">
+				<FontAwesomeIcon style="margin-right: 0.35rem" icon="gamepad" />
+				添加本地玩家
+			</button>
+			<button type="button" class="add-ai-button" @click="handleAddAi">
+				<FontAwesomeIcon style="margin-right: 0.35rem" icon="robot" />
+				添加 AI 机器人
+			</button>
+		</div>
+		<button v-else-if="addAiButton && !user" type="button" class="add-ai-button" @click="handleAddAi">
 			<FontAwesomeIcon style="margin-right: 0.35rem" icon="robot" />
-			添加 机器人 / AI
+			{{ addButtonText || "添加 机器人 / AI" }}
 		</button>
 		<template v-if="user">
 			<div class="ready-tag" v-if="isSpectator">旁观中</div>
@@ -180,8 +240,8 @@ async function handleSubmitAIEdit() {
 				@click="handleRoleSelect"
 				class="choose-role"
 				:style="{ 'background-color': role?.color }"
-				:class="{ 'no-role': role === undefined, 'my-button': canSelectRole }"
-				:disabled="!canSelectRole"
+				:class="{ 'no-role': role === undefined, 'my-button': props.localParty || canSelectRole }"
+				:aria-disabled="!canSelectRole"
 			>
 				<span>{{ role ? role.name : "选择角色" }}</span>
 			</div>
@@ -194,6 +254,15 @@ async function handleSubmitAIEdit() {
 		</div>
 
 		<div class="right-side">
+			<FpPopover v-if="canEditLocalPlayerName" placement="left">
+				<template #default>
+					<div class="local-player-name-editor" @click="openLocalPlayerNameEditor">名</div>
+				</template>
+				<template #content>
+					<div class="action-tip">修改玩家名称</div>
+				</template>
+			</FpPopover>
+
 			<FpPopover v-if="canChangeColor" placement="left">
 				<template #default>
 					<div class="color-picker">
@@ -255,6 +324,23 @@ async function handleSubmitAIEdit() {
 			<img v-if="roleImageUrl" :src="roleImageUrl" alt="" />
 		</div>
 	</div>
+
+	<FpDialog
+		v-model:visible="localPlayerNameEditorVisible"
+		title="修改玩家名称"
+		confirm-text="保存"
+		cancel-text="取消"
+		:submit-disable="!canSubmitLocalPlayerName"
+		:style="{ width: '28rem', maxWidth: '92vw' }"
+		@submit="handleSubmitLocalPlayerName"
+	>
+		<div class="ai-editor-panel">
+			<label class="ai-editor-field">
+				<span class="ai-editor-label">显示名称</span>
+				<input v-model="tempLocalPlayerName" type="text" maxlength="24" placeholder="输入玩家名称" />
+			</label>
+		</div>
+	</FpDialog>
 
 	<FpDialog
 		v-model:visible="aiEditorVisible"
@@ -327,6 +413,19 @@ $top-bar-height: 2.8rem;
 		justify-content: center;
 	}
 
+	& > .add-player-actions {
+    position: absolute;
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		z-index: 5;
+
+		.add-ai-button {
+			min-width: 10rem;
+			height: 2.4rem;
+		}
+	}
+
 	& > .right-side {
 		$item-size: 2.4rem;
 
@@ -374,7 +473,8 @@ $top-bar-height: 2.8rem;
 
 			.kick,
 			.spectator-toggle,
-			.ai-editor-trigger {
+			.ai-editor-trigger,
+			.local-player-name-editor {
 				display: flex;
 				justify-content: center;
 				align-items: center;
@@ -418,6 +518,16 @@ $top-bar-height: 2.8rem;
 				}
 			}
 
+			.local-player-name-editor {
+				background-color: var(--fp-color-primary);
+				font-size: 0.8rem;
+				font-weight: 700;
+
+				&:hover {
+					background-color: darken(fp.$fp-color-primary, 8%);
+				}
+			}
+
 			.ai-editor-trigger {
 				background-color: var(--fp-color-tertiary);
 
@@ -446,7 +556,6 @@ $top-bar-height: 2.8rem;
 	}
 
 	& > .choose-role {
-		background-color: rgba(185, 185, 185, 0.5);
 		padding: 0 0.6rem;
 		box-sizing: border-box;
 

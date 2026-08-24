@@ -3,7 +3,7 @@ import gsap from "gsap";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import type { MapPathChoiceCandidate, MapPathChoiceRequest } from "@mine-monopoly/types";
 import { useMonopolyClient } from "@src/core/monopoly-client/MonopolyClient";
-import { useUserInfo } from "@src/store";
+import { getCurrentClientPlayerId } from "@src/store/local-party";
 import { TextSprite } from "../three/TextSprite";
 
 export type MapPathChoiceArrowFactory = () => THREE.Object3D;
@@ -702,7 +702,7 @@ export class MapPathChoiceSceneController {
 	}
 
 	private isMyChoice(): boolean {
-		return this.request?.playerId === useUserInfo().userId;
+		return this.request?.playerId === getCurrentClientPlayerId();
 	}
 
 	private getPathIdFromIntersection(object: THREE.Object3D): string | null {

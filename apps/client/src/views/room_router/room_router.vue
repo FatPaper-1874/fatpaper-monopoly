@@ -31,7 +31,7 @@ onMounted(async () => {
 		if (!roomRouterRef.value) return;
 
 		const userContainer = roomRouterRef.value.querySelector(".user-container");
-		const joinRoom = roomRouterRef.value.querySelector(".join-room");
+		const joinRoom = roomRouterRef.value.querySelector(".right-container");
 
 		if (!userContainer || !joinRoom) return;
 
@@ -39,11 +39,7 @@ onMounted(async () => {
 		const tl = gsap.timeline({ defaults: { ease: "back.out(1.5)" } });
 
 		// 1. 左边容器弹出
-		tl.fromTo(
-			userContainer,
-			{ scale: 0, opacity: 0 },
-			{ scale: 1, opacity: 1, duration: 0.4 },
-		);
+		tl.fromTo(userContainer, { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.4 });
 
 		// 2. 左边容器内容依次弹出
 		tl.fromTo(
@@ -53,11 +49,7 @@ onMounted(async () => {
 		);
 
 		// 3. 右边容器弹出
-		tl.fromTo(
-			joinRoom,
-			{ scale: 0, opacity: 0 },
-			{ scale: 1, opacity: 1, duration: 0.4 },
-		);
+		tl.fromTo(joinRoom, { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.4 });
 
 		// 4. 右边容器内容依次弹出
 		tl.fromTo(
@@ -137,6 +129,23 @@ async function joinRoom(id: string): Promise<boolean> {
 	}
 }
 
+async function handleCreateLocalParty() {
+	try {
+		const monopolyClient =
+			useMonopolyClient() ??
+			(await useMonopolyClient({
+				iceServer: {
+					host: __FATPAPER_HOST__,
+					port: __ICE_SERVER_PORT__,
+				},
+			}));
+		await monopolyClient.createLocalParty(useUserInfo().username || "本地玩家1");
+		router.push({ name: "room" });
+	} catch (error: any) {
+		FPMessage({ type: "error", message: error?.message || "创建本地派对失败" });
+	}
+}
+
 const randomRoomButtonDisable = ref(false);
 let interval: any;
 async function handleGetRandomPublicRoom(e: Event) {
@@ -183,30 +192,41 @@ async function handleGetRandomPublicRoom(e: Event) {
 						<button class="quit btn-small" @click="handleLogout">登出</button>
 					</div>
 				</div>
-				<div class="join-room">
-					<div class="title">游戏大厅</div>
-					<div class="describe">
-						·输入房间号可加入房间，第一个使用房间号的将成为主机(房主)<br />
-						·建议使用稍微复杂的房间号(防止误入别人的房间)<br />
+				<div class="right-container">
+					<div class="join-room">
+						<div class="title">游戏大厅</div>
+						<div class="describe">
+							·输入房间号可加入房间，第一个使用房间号的将成为主机(房主)<br />
+							·建议使用稍微复杂的房间号(防止误入别人的房间)<br />
+						</div>
+						<form @submit="handleJoinRoom">
+							<input maxlength="12" v-model="roomId" type="text" placeholder="房间号(1-12个字符)" />
+							<button type="submit">加入/创建房间</button>
+							<FpPopover placement="bottom">
+								<template #default>
+									<button
+										class="random-room-button"
+										:disabled="randomRoomButtonDisable"
+										@click="handleGetRandomPublicRoom"
+									>
+										<FontAwesomeIcon :icon="randomRoomButtonDisable ? 'hourglass-half' : 'shuffle'" />
+									</button>
+								</template>
+								<template #content>
+									<div class="tips">寻找随机的公开房间</div>
+								</template>
+							</FpPopover>
+						</form>
 					</div>
-					<form @submit="handleJoinRoom">
-						<input maxlength="12" v-model="roomId" type="text" placeholder="房间号(1-12个字符)" />
-						<button type="submit">加入/创建房间</button>
-						<FpPopover placement="bottom">
-							<template #default>
-								<button
-									class="random-room-button"
-									:disabled="randomRoomButtonDisable"
-									@click="handleGetRandomPublicRoom"
-								>
-									<FontAwesomeIcon :icon="randomRoomButtonDisable ? 'hourglass-half' : 'shuffle'" />
-								</button>
-							</template>
-							<template #content>
-								<div class="tips">寻找随机的公开房间</div>
-							</template>
-						</FpPopover>
-					</form>
+
+					<div class="party-mode">
+						<div class="title">游戏大厅</div>
+						<div class="describe">
+							·输入房间号可加入房间，第一个使用房间号的将成为主机(房主)<br />
+							·建议使用稍微复杂的房间号(防止误入别人的房间)<br />
+						</div>
+						<button type="button" class="local-party-button" @click="handleCreateLocalParty">本地派对</button>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -261,12 +281,12 @@ async function handleGetRandomPublicRoom(e: Event) {
 		}
 	}
 
-	.join-room {
-		@include felt-patch(#ffedb7);
-		padding: 1.8rem;
-		border-radius: 2rem;
+	.right-container {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
 
-		& .title {
+		.title {
 			display: inline-block;
 			font-size: 1.6rem;
 			color: var(--fp-color-primary);
@@ -276,12 +296,18 @@ async function handleGetRandomPublicRoom(e: Event) {
 			border-radius: 1rem;
 		}
 
-		& .describe {
+		.describe {
 			font-size: 0.9rem;
 			color: #393939;
 			margin-bottom: 0.8rem;
 			padding-left: 0.8rem;
 		}
+	}
+
+	.join-room {
+		@include felt-patch(#ffedb7);
+		padding: 1.8rem;
+		border-radius: 2rem;
 
 		& form {
 			display: flex;
@@ -311,6 +337,12 @@ async function handleGetRandomPublicRoom(e: Event) {
 			border-radius: 0.7rem;
 			height: 3rem;
 		}
+	}
+
+	.party-mode {
+		@include felt-patch(#ffedb7);
+		padding: 1.8rem;
+		border-radius: 2rem;
 	}
 }
 </style>

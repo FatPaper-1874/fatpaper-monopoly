@@ -23,8 +23,9 @@
 	import scoreboard from "./components/scoreboard.vue";
 	import PlayerContainer from "./components/player-container.vue";
 	import GameButtonsPanel from "./components/game-buttons-panel.vue";
+import LocalPartyTurnHandoff from "./components/local-party-turn-handoff.vue";
 	import { useGameData, useMapData } from "@src/store/game";
-	import { useUserInfo } from "@src/store";
+	import { useLocalParty, getCurrentClientPlayerId } from "@src/store/local-party";
 	import { CustomUI, GameMap, UISchema, MapEventChangedData } from "@mine-monopoly/types";
 	import { compileTsToJs } from "@src/utils";
 	import { useAudioManager } from "@src/utils/audio/AudioManager";
@@ -40,7 +41,7 @@
 	import { CollapsiblePanel } from "@src/components/collapsible-panel";
 	//pinia仓库
 	const mapDataStore = useMapData();
-	const userInfoStore = useUserInfo();
+	const localPartyStore = useLocalParty();
 	const roomInfoStore = useRoomInfo();
 	const gameDataStore = useGameData();
 
@@ -48,6 +49,11 @@
 	const windowHeight = computed(() => window.innerHeight);
 	const amISpectator = computed(() => roomInfoStore.amISpectator);
 	const utilStore = useUtil();
+
+	function handleLocalPartyHandoff() {
+		localPartyStore.dismissHandoff();
+		utilStore.changeTurn(localPartyStore.activePlayerId === localPartyStore.currentTurnPlayerId);
+	}
 
 	// 暂停弹窗可见性：只读投影 gamePaused，禁止通过关闭按钮/遮罩点击关闭（只能点"继续游戏"）
 	const pauseDialogVisible = computed({
@@ -60,7 +66,7 @@
 		socketClient?.resumeGame();
 	}
 
-	const currentPlayerId = computed(() => userInfoStore.userId);
+	const currentPlayerId = computed(() => getCurrentClientPlayerId());
 	const gameDataState = computed(() => gameDataStore.$state);
 
 	let socketClient: MonopolyClient;
@@ -288,6 +294,13 @@
 					<CountdownTimer />
 				</teleport>
 			</div>
+
+			<LocalPartyTurnHandoff
+				v-if="localPartyStore.isActive"
+				:visible="localPartyStore.handoffVisible"
+				:player-name="localPartyStore.activePlayerName"
+				@continue="handleLocalPartyHandoff"
+			/>
 
 			<!-- 金钱粒子系统：放在 ui-container 外部，避免 pointer-events 冲突 -->
 

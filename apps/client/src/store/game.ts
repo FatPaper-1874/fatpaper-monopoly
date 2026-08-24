@@ -1,7 +1,7 @@
 import { ResourcesType, GameMap, PlayerInfo, PropertyInfo, GameData, IGameProcessExportData } from "@mine-monopoly/types";
 import type { MapPathChoiceRequest } from "@mine-monopoly/types";
 import { defineStore } from "pinia";
-import { useUserInfo } from ".";
+import { getCurrentClientPlayerId } from "./local-party";
 import useEventBus from "@src/utils/event-bus";
 import { compareObjectArrays } from "@src/utils";
 import { clone } from "lodash";
@@ -130,8 +130,8 @@ export const useGameData = defineStore("game-data", {
 		};
 	},
 	getters: {
-		isMyTurn: (state) => useUserInfo().userId === state.currentPlayerIdInRound,
-		myGameInfo: (state) => state.players.find((p) => p.id === useUserInfo().userId),
+		isMyTurn: (state) => getCurrentClientPlayerId() === state.currentPlayerIdInRound,
+		myGameInfo: (state) => state.players.find((p) => p.id === getCurrentClientPlayerId()),
 	},
 	actions: {
 		setMapPathChoiceRequest(request: MapPathChoiceRequest) {

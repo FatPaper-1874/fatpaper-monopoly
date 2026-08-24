@@ -32,6 +32,7 @@ import useEventBus from "@src/utils/event-bus";
 import { createVNode } from "vue";
 import PropertyInfoVue from "@src/components/common/property-card.vue";
 import { useGameData, useMapData, useResourceStore } from "@src/store/game";
+import { getCurrentClientPlayerId } from "@src/store/local-party";
 import { GameMap } from "@mine-monopoly/utils/protos/game-map";
 import { loadGameMapFromFile, loadGameMapFromServer } from "@src/utils/file/game-map";
 import { base64ToArrayBuffer } from "@mine-monopoly/utils";
@@ -495,11 +496,11 @@ const handleGameInit: ServerMessageHandler<SocketMsgType.GameInit> = (msg, clien
 		// 重置状态管理器，然后设置破产状态
 		const utilStore = useUtil();
 		utilStore.resetTurnState();
-		const me = gameData.players.find((p) => p.id === useUserInfo().userId);
+		const me = gameData.players.find((p) => p.id === getCurrentClientPlayerId());
 		utilStore.setBankrupted(me?.isBankrupted ?? false);
 
 		// 同步回合状态
-		const isMyTurn = Boolean(me) && gameData.currentPlayerIdInRound === useUserInfo().userId;
+		const isMyTurn = Boolean(me) && gameData.currentPlayerIdInRound === getCurrentClientPlayerId();
 		utilStore.changeTurn(isMyTurn);
 	}
 	const loadingStore = useLoading();
@@ -553,12 +554,12 @@ const handleGameData: ServerMessageHandler<SocketMsgType.GameData> = (msg) => {
 			}
 		}
 
-		const me = gameData.players.find((p) => p.id === useUserInfo().userId);
+		const me = gameData.players.find((p) => p.id === getCurrentClientPlayerId());
 		const utilStore = useUtil();
 		utilStore.setBankrupted(me?.isBankrupted ?? false);
 
 		// 同步回合状态
-		const isMyTurn = Boolean(me) && gameData.currentPlayerIdInRound === useUserInfo().userId;
+		const isMyTurn = Boolean(me) && gameData.currentPlayerIdInRound === getCurrentClientPlayerId();
 		utilStore.changeTurn(isMyTurn);
 	}
 };
@@ -591,7 +592,7 @@ const handleRoundTimeOut: ServerMessageHandler<SocketMsgType.RoundTimeOut> = (ms
 	if (!msg.data) return;
 	const { playerId } = msg.data;
 	const utilStore = useUtil();
-	const currentUserId = useUserInfo().userId;
+	const currentUserId = getCurrentClientPlayerId();
 
 	// 只有当前玩家的超时才触发
 	if (playerId === currentUserId) {
@@ -622,7 +623,7 @@ const handleRoundTurn: ServerMessageHandler<SocketMsgType.RoundTurn> = (msg) => 
 	if (!msg.data) return;
 	const currentRoundPlayerId = msg.data;
 	const utilStore = useUtil();
-	const isMyTurn = currentRoundPlayerId === useUserInfo().userId;
+	const isMyTurn = currentRoundPlayerId === getCurrentClientPlayerId();
 
 	// 使用 store 的 action 处理回合切换
 	utilStore.changeTurn(isMyTurn);
@@ -817,7 +818,7 @@ const handleTargetSelect: ServerMessageHandler<SocketMsgType.TargetSelectDialog>
 				source: SocketMsgSource.Client,
 				data: {
 					operateType: OperateType.TargetSelectDialogResult,
-					data: { target: res },
+					data: { target: Array.from(res) },
 				},
 			});
 		})
@@ -842,7 +843,7 @@ const handleItemSelectDialog: ServerMessageHandler<SocketMsgType.ItemSelectDialo
 				source: SocketMsgSource.Client,
 				data: {
 					operateType: OperateType.ItemSelectDialogResult,
-					data: { selected: res },
+					data: { selected: Array.from(res) },
 				},
 			});
 		})

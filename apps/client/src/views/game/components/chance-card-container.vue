@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { useSettig, useUserInfo } from "@src/store";
+import { useSettig } from "@src/store";
+import { getCurrentClientPlayerId } from "@src/store/local-party";
 import { computed, provide, ref, watch, toRaw } from "vue";
 import { ChanceCard } from "@mine-monopoly/ui";
 import { useUtil } from "@src/store";
@@ -9,12 +10,12 @@ import { showTargetSelector } from "@src/components/common/target-seletor";
 import { useMonopolyClient } from "@src/core/monopoly-client/MonopolyClient";
 
 const gameInfoStore = useGameData();
-const userInfoStore = useUserInfo();
+
 const utilStore = useUtil();
 const settingStore = useSettig();
 
 const _chanceCardsList = computed(() => {
-	const player = gameInfoStore.players.find((player) => player.id === userInfoStore.userId);
+	const player = gameInfoStore.players.find((player) => player.id === getCurrentClientPlayerId());
 	if (player) {
 		return player.chanceCards;
 	} else {
@@ -41,7 +42,7 @@ async function handleChanceCardClick(card: ChanceCardClientInfo) {
 		.then((target) => {
 			// 确保只有在用户确认时才使用卡片
 			if (target && target.length > 0) {
-				useMonopolyClient().useChanceCard(card.id, target);
+				useMonopolyClient().useChanceCard(card.id, Array.from(toRaw(target)));
 			}
 		})
 		.catch(() => {

@@ -62,6 +62,15 @@ export interface User {
 }
 
 /**
+ * 本地派对中由同一客户端控制的真人玩家。
+ */
+export interface LocalPartyPlayer {
+	userId: string;
+	username: string;
+	avatar: string;
+	color: string;
+}
+/**
  * 游戏内用户信息接口
  * 包含用户和角色信息
  */

@@ -50,7 +50,7 @@ export class Player implements IPlayer {
 	/** @deprecated 仅用于旧 effectCode、旧存档和线性地图兼容；图移动以 positionMapItemId 为准。 */
 	public positionIndex: number;
 	/** 玩家当前位置的唯一运行时真相。 */
-	public positionMapItemId?: string;
+	public positionMapItemId: string;
 	/** 尚未被回退的实际行走轨迹，同时用于分岔选择和 walk(-n)。 */
 	public movementHistory: MapMovementHistoryEntry[] = [];
 	/** 刚从该节点退回当前位置时设置；用于在路口排除死路和进入分支前的来路。 */
@@ -79,8 +79,8 @@ export class Player implements IPlayer {
 		initPositionIndex: number,
 		roundPhasesInfo: GamePhaseInfo[],
 		role: Role,
+		initPositionMapItemId: string,
 		extraLibs?: string,
-		initPositionMapItemId?: string,
 	) {
 		this.roundPhases = roundPhasesInfo.map((roundPhaseInfo) => {
 			return new GamePhase(roundPhaseInfo, undefined, extraLibs);

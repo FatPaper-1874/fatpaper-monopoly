@@ -59,6 +59,7 @@ function handleShowPlayerDetail(player: PlayerInfo) {
 }
 
 .player-list {
+	padding: .2rem;
 	display: flex;
 	flex-direction: column;
 	justify-content: space-around;

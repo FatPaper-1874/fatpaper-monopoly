@@ -1,0 +1,474 @@
+
+@use "@src/assets/variables" as *;
+@use "@mine-monopoly/style/variables" as fp;
+
+.room-page {
+	width: 80%;
+	height: 80%;
+	padding: 1.2rem;
+	margin: auto;
+	box-sizing: border-box;
+	display: flex;
+	justify-content: space-between;
+
+	& > div {
+		height: 100%;
+	}
+
+	& > .left-container {
+		width: 21rem;
+		margin-right: 0.5rem;
+		border-radius: 0.6rem;
+		backdrop-filter: blur(0.2rem);
+		box-shadow: var(--fp-shadow-md);
+		display: flex;
+		flex-direction: column;
+		@include felt-patch(#ffedb7);
+
+		.left-inner {
+			flex: 1;
+			width: 100%;
+			min-height: 0;
+			display: flex;
+			flex-direction: column;
+			justify-content: space-between;
+			align-items: center;
+			margin-top: 2rem;
+		}
+	}
+
+	& > .right-container {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+
+		& > .spectator-list {
+			display: flex;
+			align-items: center;
+			flex-wrap: wrap;
+			gap: 0.45rem;
+			margin-bottom: 0.6rem;
+			padding: 0.75rem 0.9rem;
+			border-radius: 0.7rem;
+			box-shadow: var(--fp-shadow-md);
+			@include felt-patch(#ffe6a8);
+
+			.spectator-list-label,
+			.spectator-user {
+				background-image: var(--fp-texture-felt);
+			}
+
+			& .spectator-list-label {
+				display: inline-flex;
+				align-items: center;
+				padding: 0.42rem 0.72rem;
+				border-radius: 0.65rem;
+				background-color: var(--fp-color-secondary);
+				color: #ffffff;
+				font-size: 0.88rem;
+				letter-spacing: 0.04em;
+			}
+
+			& .spectator-user {
+				display: inline-flex;
+				align-items: center;
+				padding: 0.38rem 0.68rem;
+				border-radius: 999px;
+				background-color: rgba(255, 255, 255, 0.94);
+				color: var(--fp-color-text);
+				font-size: 0.84rem;
+				font-weight: 600;
+			}
+
+			& .spectator-exit-button {
+				margin-left: auto;
+				flex-shrink: 0;
+			}
+		}
+
+		& > .player-list-container {
+			flex: 1;
+			display: grid;
+			grid-template-rows: 1fr 1fr;
+			grid-template-columns: 1fr 1fr 1fr;
+			row-gap: 0.5rem;
+			column-gap: 0.5rem;
+		}
+	}
+}
+
+.room-topbar {
+	position: absolute;
+	top: -1rem;
+	width: 100%;
+	color: #ffffff;
+	z-index: 20;
+
+	& > .leave-room-button {
+		height: 2.2rem;
+		position: absolute;
+		top: 0.3rem;
+		left: -0.3rem;
+		padding: 0 0.7rem;
+		font-size: 1rem;
+		text-shadow: var(--fp-text-shadow);
+		border-radius: 0.6rem;
+		transform: rotate(-2.5deg);
+	}
+
+	& > .room-name {
+		background-image: var(--fp-texture-felt);
+		border-radius: 0.6rem;
+		height: 2.7rem;
+		font-size: 1.1rem;
+		display: block;
+		position: absolute;
+		right: 0.5rem;
+		text-align: center;
+		width: 70%;
+		background-color: var(--fp-color-tertiary);
+		text-shadow: var(--fp-text-shadow);
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		box-shadow:
+			0 0.15rem 0 darken(fp.$fp-color-secondary, 12%),
+			0 0.2rem 0.3rem rgba(0, 0, 0, 0.15);
+	}
+}
+
+.map-preview-inroom {
+	width: 95%;
+	height: 12rem;
+	position: relative;
+	overflow: hidden;
+
+	& > .select-map-info {
+		position: absolute;
+		left: 0;
+		top: 0;
+
+		& > .name {
+			width: auto;
+			display: inline-block;
+			padding: 0.6rem 1rem;
+			border-radius: 0 0.3rem 0.3rem 0.3rem;
+			background-color: var(--fp-color-secondary);
+			color: var(--fp-color-text-white);
+		}
+	}
+
+	& > .select-map-button {
+		position: absolute;
+		right: 0;
+		bottom: 0;
+		z-index: 100;
+		display: flex;
+		gap: 0.2rem;
+
+		button {
+			border: 0;
+			font-size: 0.8rem;
+			padding: 0.6rem 1.2rem;
+			border-radius: 0.6rem;
+			&.nomap:not([disabled]) {
+				background-color: var(--fp-color-secondary);
+				animation: identifier 1.5s infinite ease-in-out;
+
+				&:hover {
+					background-color: var(--fp-color-tertiary);
+				}
+
+				@keyframes identifier {
+					50% {
+						background-color: lighten(fp.$fp-color-secondary, 10%);
+					}
+				}
+			}
+		}
+
+		.tips {
+			width: max-content;
+			font-size: 0.8rem;
+			border-radius: 0.7rem;
+			padding: 0.2rem;
+			color: var(--fp-color-primary);
+			text-shadow: var(--fp-text-shadow);
+		}
+	}
+
+	& .map-cover-container {
+		width: 100%;
+		height: 100%;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		box-sizing: border-box;
+		border: 0.4rem solid var(--fp-color-border-lighter);
+		border-radius: 1rem;
+		background-color: var(--fp-color-bg-disable);
+		color: var(--fp-color-text-secondary);
+	}
+
+	& .map-previewer {
+		position: absolute;
+		z-index: 1;
+	}
+}
+
+.local-map-tips {
+	margin: 0.4rem 0;
+	color: var(--fp-color-primary);
+	background-color: rgba(255, 255, 255, 0.4);
+	border-radius: 0.5rem;
+	padding: 0.3rem;
+	font-size: 0.7rem;
+}
+
+.game-setting {
+	width: 100%;
+	padding: 0.6rem;
+	padding-top: 0;
+	box-sizing: border-box;
+	flex: 1;
+	overflow-y: auto;
+	min-height: 0;
+
+	& .game-setting-button {
+		font-size: 0.8rem;
+		padding: 0.5rem;
+		margin-top: 0.1rem;
+		border-radius: 0.6rem;
+		width: 100%;
+	}
+
+	.game-setting-item {
+		background-color: #ffffff;
+		background-image: var(--fp-texture-felt);
+		margin-top: 0.7rem;
+		padding: 0.5rem 0.8rem;
+		border: 0.2rem solid #ffffff;
+		border-radius: 0.5rem;
+		display: flex;
+		justify-content: space-between;
+
+		& .label {
+			color: #393939;
+		}
+		& .value {
+			color: var(--fp-color-secondary);
+		}
+	}
+}
+
+.room-footbar {
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+
+	& > .ready-button {
+		width: 100%;
+		height: 2.7rem;
+		padding: 0 0.7rem;
+		border: 0;
+		font-size: 1.2rem;
+		text-shadow: var(--fp-text-shadow);
+		margin-bottom: 0;
+		border-radius: 0.5rem;
+	}
+
+	.footbar-row {
+		display: flex;
+		gap: 0.4rem;
+		width: 100%;
+
+		.footbar-btn-start {
+			flex: 2;
+			height: 2.7rem;
+			padding: 0 0.7rem;
+			border: 0;
+			font-size: 1.2rem;
+			text-shadow: var(--fp-text-shadow);
+			border-radius: 0.5rem;
+		}
+
+		.footbar-btn-load {
+			flex: 1;
+			height: 2.7rem;
+			font-size: 1rem;
+			background-color: var(--fp-color-tertiary);
+			display: flex;
+			justify-content: center;
+			align-items: center;
+		}
+	}
+
+	.load-save-button {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+}
+
+.save-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.6rem;
+	max-height: 24rem;
+	overflow-y: auto;
+	padding: 0.2rem;
+
+	.save-item {
+		background-color: rgba(255, 255, 255, 0.8);
+		border-radius: 0.6rem;
+		box-shadow: var(--fp-shadow-md);
+
+		.save-item-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			padding: 0.6rem 0.8rem;
+			border-bottom: 0.0625rem solid rgba(0, 0, 0, 0.06);
+
+			.save-map-name {
+				font-weight: bold;
+				font-size: 1rem;
+				color: var(--fp-color-primary);
+			}
+
+			.save-round-badge {
+				font-size: 0.85rem;
+				padding: 0.15rem 0.5rem;
+				border-radius: 1rem;
+				background-color: var(--fp-color-primary);
+				color: white;
+				font-weight: 500;
+			}
+		}
+
+		.save-item-body {
+			padding: 0.6rem 0.8rem;
+			display: flex;
+			flex-direction: column;
+			gap: 0.5rem;
+
+			.save-meta {
+				display: flex;
+				justify-content: space-between;
+				font-size: 0.85rem;
+				color: #666;
+
+				.save-players,
+				.save-time {
+					display: flex;
+					align-items: center;
+				}
+			}
+
+			.save-actions {
+				display: flex;
+				gap: 0.4rem;
+
+				.save-load-btn {
+					flex: 1;
+					background-color: var(--fp-color-primary);
+					color: white;
+					display: flex;
+					justify-content: center;
+					align-items: center;
+				}
+			}
+		}
+	}
+
+	.save-empty {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 2rem;
+		color: #999;
+		font-size: 0.95rem;
+		gap: 0.3rem;
+	}
+}
+
+/* 移动端响应式 */
+@media (max-width: 48rem) {
+	.room-page {
+		width: 95%;
+		height: 95%;
+		flex-direction: column;
+		overflow-y: auto;
+		gap: 0.5rem;
+		padding: 0.8rem;
+	}
+
+	.left-container {
+		width: 100% !important;
+		flex: none;
+		height: auto !important;
+		margin-right: 0 !important;
+		min-height: 0;
+
+		.left-inner {
+			justify-content: space-between;
+			gap: 0.4rem;
+			min-height: 0;
+		}
+	}
+
+	.right-container {
+		width: 100%;
+		flex: none;
+		min-height: 8rem;
+
+		.player-list-container {
+			grid-template-rows: 1fr;
+			grid-template-columns: 1fr 1fr;
+		}
+	}
+
+	.room-topbar {
+		position: static;
+		margin-bottom: 0.3rem;
+
+		.room-name {
+			position: static;
+			width: 100%;
+			height: 2rem;
+			font-size: 0.9rem;
+		}
+
+		.leave-room-button {
+			position: static;
+			transform: none;
+		}
+	}
+
+	.map-preview-inroom {
+		height: 8rem;
+		width: 100%;
+	}
+
+	.game-setting {
+		overflow-y: auto;
+		max-height: 12rem;
+		min-height: 0;
+
+		.game-setting-item {
+			font-size: 0.8rem;
+			padding: 0.3rem 0.6rem;
+			margin-top: 0.4rem;
+		}
+	}
+
+	.room-footbar {
+		.ready-button,
+		.footbar-btn-start {
+			font-size: 1rem;
+			height: 2.2rem;
+		}
+	}
+}

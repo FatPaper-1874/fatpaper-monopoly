@@ -2,6 +2,7 @@ import { DataConnection } from "peerjs";
 import {
 	AIDecisionConfig,
 	ClientSocketMessage,
+	RoomMapInfo,
 	ServerSocketMessage,
 	SocketMessage,
 	SocketMsgSource,
@@ -12,6 +13,7 @@ import { ReconnectionManager } from "@src/core/monopoly-client/ReconnectionManag
 import { MonopolyHost } from "@src/core/monopoly-host/MonopolyHost";
 import { getRoomSessionStatus } from "@src/utils/api/room-router";
 import { useUserInfo } from "@src/store";
+import { LocalPartySession } from "@src/core/local-party/LocalPartySession";
 
 export type WebRtcSessionState =
 	| "idle"
@@ -91,6 +93,7 @@ export class WebRtcSessionManager {
 	private peerClient: PeerClient | null = null;
 	private connection: DataConnection | null = null;
 	private host: MonopolyHost | null = null;
+	private localPartySession: LocalPartySession | null = null;
 	private state: WebRtcSessionState = "idle";
 	private connectionGeneration = 0;
 	private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -122,7 +125,29 @@ export class WebRtcSessionManager {
 	public getConnectionStrategy(): ConnectionStrategy {
 		return this.strategy;
 	}
-	/** 当前页面是否实际持有 P2P 主机实例（不同于房间 owner 身份）。 */
+	/** 当前页面是否为本地派对会话。 */
+	public isLocalParty(): boolean {
+		return this.localPartySession !== null;
+	}
+	public async createLocalParty(defaultName: string): Promise<void> {
+		await this.close();
+		this.explicitClose = false;
+		this.localPartySession = await LocalPartySession.create(defaultName, (message) => {
+			this.options.onMessage(message);
+			this.emit("message", message);
+		});
+		this.transition("connected", "本地派对");
+	}
+	public addLocalPartyPlayer() {
+		return this.localPartySession?.addHuman() ?? Promise.resolve({ success: false, error: "本地派对未创建" });
+	}
+	public updateLocalPartyPlayerName(userId: string, username: string) {
+		return this.localPartySession?.updateHumanName(userId, username) ?? { success: false, error: "本地派对未创建" };
+	}
+	public removeLocalPartyPlayer(userId: string) {
+		return this.localPartySession?.removeHuman(userId) ?? { success: false, error: "本地派对未创建" };
+	}
+
 	public hasLocalHost(): boolean {
 		return this.host !== null;
 	}
@@ -180,6 +205,10 @@ export class WebRtcSessionManager {
 	}
 
 	public send(message: ClientSocketMessage): SessionSendResult {
+		if (this.localPartySession) {
+			this.localPartySession.handleClientMessage(message);
+			return { ok: true, generation: this.connectionGeneration };
+		}
 		if (!this.connection?.open || this.state === "closing" || this.state === "closed")
 			return { ok: false, reason: "not-connected" };
 		try {
@@ -219,51 +248,63 @@ export class WebRtcSessionManager {
 	}
 
 	public requestSave(): void {
+		if (this.localPartySession) {
+			this.localPartySession.requestSave();
+			return;
+		}
 		this.host?.getRoom().requestSave();
 	}
 	public loadSave(record: any, usePrevious: boolean): Promise<{ success: boolean; error?: string }> {
 		return (
-			this.host?.getRoom().loadSave(record, usePrevious) ?? Promise.resolve({ success: false, error: "未连接到主机" })
+			this.localPartySession?.loadSave(record, usePrevious) ?? this.host?.getRoom().loadSave(record, usePrevious) ?? Promise.resolve({ success: false, error: "未连接到主机" })
 		);
 	}
 	public changeColorForUser(userId: string, color: string) {
-		return this.host?.getRoom().changeColor(userId, color) ?? { success: false, error: "只有房主可以执行此操作" };
+		return this.localPartySession?.changeColorForUser(userId, color) ?? this.host?.getRoom().changeColor(userId, color) ?? { success: false, error: "只有房主可以执行此操作" };
 	}
 	public addAIPlayer() {
-		return this.host?.getRoom().addAiPlayer() ?? { success: false, error: "只有房主可以添加 AI" };
+		return this.localPartySession?.addAIPlayer() ?? this.host?.getRoom().addAiPlayer() ?? { success: false, error: "只有房主可以添加 AI" };
 	}
 	public randomizeAIRoles(): boolean {
-		return this.host?.getRoom().randomizeAiRoles() ?? false;
+		return this.localPartySession?.randomizeAIRoles() ?? this.host?.getRoom().randomizeAiRoles() ?? false;
 	}
 	public setSpectatorMode(enabled: boolean) {
 		return this.host?.getRoom().setOwnerSpectatorMode(enabled) ?? { success: false, error: "只有房主可以切换旁观模式" };
 	}
 	public changeRoleForUser(userId: string, roleId: string) {
-		return this.host?.getRoom().changeRole(userId, roleId) ?? { success: false, error: "只有房主可以修改角色" };
+		return this.localPartySession?.changeRoleForUser(userId, roleId) ?? this.host?.getRoom().changeRole(userId, roleId) ?? { success: false, error: "只有房主可以修改角色" };
 	}
 	public updateAIPlayerName(userId: string, username: string) {
 		return (
-			this.host?.getRoom().updateAIPlayerName(userId, username) ?? { success: false, error: "只有房主可以修改 AI 名称" }
+			this.localPartySession?.updateAIPlayerName(userId, username) ?? this.host?.getRoom().updateAIPlayerName(userId, username) ?? { success: false, error: "只有房主可以修改 AI 名称" }
 		);
 	}
 	public updateAIDecisionConfig(config: AIDecisionConfig): void {
+		if (this.localPartySession) {
+			this.localPartySession.updateAIDecisionConfig(config);
+			return;
+		}
 		this.host?.getRoom().updateAIDecisionConfig(config);
 	}
 	public isAiPlayer(userId: string): boolean {
-		return this.host?.getRoom().isAiPlayer(userId) ?? false;
+		return this.localPartySession?.isAiPlayer(userId) ?? this.host?.getRoom().isAiPlayer(userId) ?? false;
 	}
 	public removeAIPlayer(userId: string): boolean {
-		return this.host?.getRoom().removeAiPlayer(userId) ?? false;
+		return this.localPartySession?.removeAIPlayer(userId) ?? this.host?.getRoom().removeAiPlayer(userId) ?? false;
 	}
-	public changeGameMap(mapInfo: import("@mine-monopoly/types").RoomMapInfo): boolean {
-		if (!this.host) return false;
+	public changeLocalPartyMap(mapInfo: RoomMapInfo): Promise<{ success: boolean; error?: string }> {
+		return this.localPartySession?.changeGameMap(mapInfo)
+			?? Promise.resolve({ success: false, error: "本地派对未创建" });
+	}
+	public changeGameMap(mapInfo: RoomMapInfo): boolean {
+		if (this.localPartySession || !this.host) return false;
 		void this.host.getRoom().changeMap(mapInfo);
 		return true;
 	}
 
 	public async close(): Promise<void> {
 		if (this.state === "closing") return;
-		if (this.state === "closed" && !this.connection && !this.peerClient && !this.host && !this.reconnectContext) return;
+		if (this.state === "closed" && !this.connection && !this.peerClient && !this.host && !this.localPartySession && !this.reconnectContext) return;
 		this.explicitClose = true;
 		this.transition("closing");
 		this.stopReconnection();
@@ -273,6 +314,8 @@ export class WebRtcSessionManager {
 		this.peerClient = null;
 		this.peerStrategy = null;
 		this.host?.destory();
+		this.localPartySession?.destroy();
+		this.localPartySession = null;
 		this.host = null;
 		this.reconnectContext = null;
 		this.transition("closed");

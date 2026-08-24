@@ -70,7 +70,14 @@ const handleButtonRegister = (message: ButtonRegisterMessage) => {
 		callback: () => {},
 	};
 
-	buttons.value.push(button);
+	// 初始注册和 __sync__ 可能同时到达，按 ID 更新，避免重复按钮。
+	const existingIndex = buttons.value.findIndex((item) => item.id === message.buttonId);
+	if (existingIndex >= 0) {
+		buttons.value.splice(existingIndex, 1, button);
+	} else {
+		buttons.value.push(button);
+	}
+	buttons.value = [...buttons.value];
 };
 
 const handleButtonStateChanged = (message: ButtonStateChangedMessage) => {
@@ -104,26 +111,40 @@ const handleButtonClick = (buttonId: string) => {
 	}
 };
 
+const syncButtons = () => {
+	try {
+		useMonopolyClient().sendDynamicButtonClick("__sync__");
+	} catch (error) {
+		console.error("[DynamicButtonContainer] 请求同步按钮失败:", error);
+	}
+};
+
+// 当前控制玩家变化时，清理上一位玩家的按钮并重新同步。
+watch(
+	() => props.playerId,
+	() => {
+		buttons.value = [];
+		syncButtons();
+	},
+);
+
 // 生命周期
-onMounted(async () => {
+onMounted(() => {
 	// 注册事件监听器
+
 	eventBus.on("button:register", handleButtonRegister);
 	eventBus.on("button:state-changed", handleButtonStateChanged);
 	eventBus.on("button:remove", handleButtonRemove);
 
-	// 初始化按钮状态
+	// 初始化按钮状态，并立即同步一次。
+	// 组件可能在 game:init-finished 事件之后才挂载，不能只依赖 once 监听。
 	updateButtonsEnabledState();
+	syncButtons();
 
-	// 监听游戏初始化完成事件后再请求同步
-	eventBus.once("game:init-finished", async () => {
-		try {
-			const socketClient = useMonopolyClient();
-			socketClient.sendDynamicButtonClick("__sync__");
-			// 同步完成后再次更新按钮状态
-			updateButtonsEnabledState();
-		} catch (error) {
-			console.error("[DynamicButtonContainer] 同步按钮失败:", error);
-		}
+	// 游戏初始化完成后再同步一次，覆盖 Worker/UI 的初始化时序差异。
+	eventBus.once("game:init-finished", () => {
+		syncButtons();
+		updateButtonsEnabledState();
 	});
 });
 

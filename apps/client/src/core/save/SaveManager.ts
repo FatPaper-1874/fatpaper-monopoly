@@ -104,6 +104,11 @@ export class SaveManager {
 		return record;
 	}
 
+	/** 查询全部本地存档 */
+	async list(): Promise<SaveRecord[]> {
+		return this.storage.list();
+	}
+
 	/** 按地图查询存档列表 */
 	async listByMap(mapId: string, mapVersion: string): Promise<SaveRecord[]> {
 		return this.storage.listByMap(mapId, mapVersion);

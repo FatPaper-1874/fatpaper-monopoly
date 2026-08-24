@@ -75,7 +75,7 @@ export class MonopolyClient {
 			onStateChange: (state, detail) => {
 				useUtil().connectionStatusText = state;
 				useUtil().connectionStatusReason = detail || "";
-				useUtil().connectionMode = state === "connected" ? (this.session.getConnectionStrategy() === "force-relay" ? "relay" : "p2p") : "unknown";
+				useUtil().connectionMode = state === "connected" ? (this.session.isLocalParty() ? "local" : this.session.getConnectionStrategy() === "force-relay" ? "relay" : "p2p") : "unknown";
 			},
 			onHostClosed: (status) => {
 				this.handleDisconnect({
@@ -125,6 +125,18 @@ export class MonopolyClient {
 		}
 	}
 
+	public async createLocalParty(defaultName: string): Promise<void> {
+		useUtil().gamePaused = false;
+		await this.session.createLocalParty(defaultName);
+	}
+	public addLocalPartyPlayer(): Promise<{ success: boolean; error?: string }> { return this.session.addLocalPartyPlayer(); }
+	public updateLocalPartyPlayerName(userId: string, username: string): { success: boolean; error?: string } {
+		return this.session.updateLocalPartyPlayerName(userId, username);
+	}
+	public removeLocalPartyPlayer(userId: string): { success: boolean; error?: string } {
+		return this.session.removeLocalPartyPlayer(userId);
+	}
+
 	public cancelReconnection(): void { this.session.cancelReconnection(); }
 	public isReconnecting(): boolean { return this.session.isReconnecting(); }
 	public handleHeartReply(): void { this.session.handleHeartbeatReply(); }
@@ -163,13 +175,14 @@ export class MonopolyClient {
 	}
 
 	public changeColorForUser(userId: string, newColor: string): { success: boolean; error?: string } {
-		if (this.session.isAiPlayer(userId)) return this.session.changeColorForUser(userId, newColor);
+		if (this.session.isLocalParty() || this.session.isAiPlayer(userId)) return this.session.changeColorForUser(userId, newColor);
 		if (userId === useUserInfo().userId) { this.changeColor(newColor); return { success: true }; }
 		return { success: false, error: "当前只支持房主修改 AI 玩家颜色" };
 	}
 
 	public kickOut(playerId: string) {
 		if (this.session.isAiPlayer(playerId)) { this.session.removeAIPlayer(playerId); return; }
+		if (this.session.isLocalParty()) return this.session.removeLocalPartyPlayer(playerId);
 		void this.sendMsg({ type: SocketMsgType.KickOut, source: SocketMsgSource.Client, data: playerId });
 	}
 
@@ -182,7 +195,7 @@ export class MonopolyClient {
 	public setSpectatorMode(enabled: boolean): { success: boolean; error?: string } { return this.session.setSpectatorMode(enabled); }
 
 	public changeRoleForUser(userId: string, roleId: string): { success: boolean; error?: string } {
-		if (this.session.isAiPlayer(userId)) return this.session.changeRoleForUser(userId, roleId);
+		if (this.session.isLocalParty() || this.session.isAiPlayer(userId)) return this.session.changeRoleForUser(userId, roleId);
 		if (userId === useUserInfo().userId) { this.changeRole(roleId); return { success: true }; }
 		return { success: false, error: "当前只支持房主修改 AI 玩家角色" };
 	}
@@ -195,9 +208,11 @@ export class MonopolyClient {
 		return this.session.updateAIPlayerName(userId, username);
 	}
 
-	public changeGameMap(msg: RoomMapInfo) {
-		if (this.session.changeGameMap(msg)) return;
-		void this.sendMsg({ type: SocketMsgType.ChangeMap, source: SocketMsgSource.Client, data: msg });
+	public async changeGameMap(msg: RoomMapInfo): Promise<{ success: boolean; error?: string }> {
+		if (this.session.isLocalParty()) return this.session.changeLocalPartyMap(msg);
+		if (this.session.changeGameMap(msg)) return { success: true };
+		const result = await this.sendMsg({ type: SocketMsgType.ChangeMap, source: SocketMsgSource.Client, data: msg });
+		return result.ok ? { success: true } : { success: false, error: "地图切换请求发送失败" };
 	}
 
 	public changeGameSetting(gameSetting: GameSetting) {

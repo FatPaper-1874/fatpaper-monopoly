@@ -2,15 +2,15 @@
 import { ref, computed } from "vue";
 import { useRoute } from "vue-router";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { useRoomInfo, useUserInfo } from "@src/store";
+import { useRoomInfo } from "@src/store";
 import { useMonopolyClient } from "@src/core/monopoly-client/MonopolyClient";
 
 const route = useRoute();
 const roomInfoStore = useRoomInfo();
-const userInfoStore = useUserInfo();
+
 const saving = ref(false);
 
-const isOwner = computed(() => userInfoStore.userId === roomInfoStore.ownerId);
+const isOwner = computed(() => roomInfoStore.amIRoomOwner);
 const isInGame = computed(() => route.name === "game");
 
 async function handleSave() {
