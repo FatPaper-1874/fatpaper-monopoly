@@ -1399,6 +1399,7 @@ export class GameRenderer {
 		});
 		for (const key of ["level", "owner", "costList"]) {
 			useEventBus().on(`property-${key}`, async (propertyId: string) => {
+				console.log("🚀 ~ GameRenderer ~ initEventListener ~ property-${key}:", `${key} --- ${propertyId}`)
 				this.updateBuilding(useGameData().getPropertyById(propertyId)!);
 			});
 		}

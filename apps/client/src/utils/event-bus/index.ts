@@ -57,10 +57,10 @@ class EventBus {
 
 	public remove(eventName: string, fn: Function) {
 		const fnArr = this.eventMap.get(eventName);
-		if (fnArr) {
-			const removeIndex = fnArr.findIndex((fobj) => fobj.fn === fn);
-			fnArr.splice(removeIndex, 1);
-		}
+		if (!fnArr) return;
+
+		const removeIndex = fnArr.findIndex((fobj) => fobj.fn === fn);
+		if (removeIndex !== -1) fnArr.splice(removeIndex, 1);
 	}
 
 	public removeAllByEventName(eventName: string) {

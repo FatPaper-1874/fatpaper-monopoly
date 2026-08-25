@@ -17,13 +17,17 @@ type EventMap = Map<OperateType, OperateListenerItem[]>;
  * 定时器数据结构
  */
 type TimerData = {
+	/** 本次等待的唯一标识，用于精确关联 UI、超时事件与操作结果 */
+	timeoutId: string;
 	playerId: string;
 	eventType: OperateType;
-	timeoutId: ReturnType<typeof setTimeout>;
+	timeoutHandle: ReturnType<typeof setTimeout>;
 	intervalId?: ReturnType<typeof setInterval>;
 	startTime: number;
 	totalPausedTime: number;
 	timeout: number;
+	/** 此等待注册的监听器；超时时只移除自身，不能影响同类并发等待 */
+	listener?: Function;
 	/** 超时/恢复时用于结束等待 Promise 的 resolve（防止暂停恢复后 Promise 永久悬挂） */
 	resolve?: (value: any) => void;
 	/** 超时后返回的默认值 */
@@ -34,7 +38,12 @@ type TimerData = {
  * 倒计时信息类型
  */
 export type TimeoutInfo = {
+	/** 本次等待的唯一标识 */
+	timeoutId: string;
 	playerId: string;
+	eventType: OperateType;
+	/** 计时开始时间，用于在多个等待中选择当前应展示的倒计时 */
+	startedAt: number;
 	remainingMs: number;
 	totalTime: number;
 };
@@ -59,7 +68,7 @@ export class OperateListener {
 
 	// 回调函数
 	private globalTickCallback: ((timeouts: TimeoutInfo[]) => void) | null = null;
-	private timeoutCallback: ((playerId: string, eventType: OperateType) => void) | null = null;
+	private timeoutCallback: ((timeout: TimeoutInfo) => void) | null = null;
 
 	constructor() {}
 
@@ -130,7 +139,7 @@ export class OperateListener {
 	public remove<T extends OperateType>(
 		playerId: string,
 		eventType: T,
-		listener: (...args: any[]) => PlayerOperationResult[T],
+		listener: Function,
 	): void {
 		const playerEvents = this.eventMap.get(playerId);
 		if (!playerEvents) return;
@@ -215,7 +224,7 @@ export class OperateListener {
 	 * 设置超时回调
 	 * @param callback 回调函数，接收超时的玩家ID和事件类型
 	 */
-	public setTimeoutCallback(callback: (playerId: string, eventType: OperateType) => void): void {
+	public setTimeoutCallback(callback: (timeout: TimeoutInfo) => void): void {
 		this.timeoutCallback = callback;
 	}
 
@@ -234,58 +243,70 @@ export class OperateListener {
 		options: {
 			timeout?: number;
 			defaultValue: PlayerOperationResult[T];
+			/** 由调用方提供时，可与对应 UI 请求精确关联。 */
+			timeoutId?: string;
+			/** 仅消费匹配本次等待的操作结果，避免同类并发等待互相结束。 */
+			match?: (data: PlayerOperationResult[T]) => boolean;
 		},
 	): Promise<PlayerOperationResult[T]> {
+		console.log("🚀 ~ OperateListener ~ onceAsyncWithTimeout ~ options.timeout:", options.timeout)
 		const timeout = options.timeout ?? DEFAULT_TIMEOUT;
-		const timerKey = this.generateTimerKey();
+		const timeoutId = options.timeoutId ?? this.generateTimerKey();
 		const startTime = Date.now();
 
 		return new Promise((resolve) => {
-			// 创建操作监听器
 			const listener = (data: PlayerOperationResult[T]) => {
-				this.clearTimer(timerKey);
+				if (options.match && !options.match(data)) return;
+				this.remove(playerId, eventType, listener);
+				this.clearTimer(timeoutId);
+				this.broadcastAllTimeouts();
 				resolve(data);
 			};
 
-			this.once(playerId, eventType, listener);
+			// 使用持续监听并在本次匹配后自行移除，确保同类型并发等待不会被一次操作同时消费。
+			this.on(playerId, eventType, listener);
 
-			// 设置超时定时器
-			const timeoutId = setTimeout(() => {
-				this.clearTimer(timerKey);
-				this.removeAll(playerId, eventType);
-				// 通知服务器发生了超时
-				this.timeoutCallback?.(playerId, eventType);
+			const timeoutHandle = setTimeout(() => {
+				this.clearTimer(timeoutId);
+				this.remove(playerId, eventType, listener);
+				this.timeoutCallback?.({
+					timeoutId,
+					playerId,
+					eventType,
+					startedAt: startTime,
+					remainingMs: 0,
+					totalTime: timeout,
+				});
+				this.broadcastAllTimeouts();
 				resolve(options.defaultValue);
 			}, timeout);
 
-			// 保存定时器数据
-			this.activeTimers.set(timerKey, {
+			this.activeTimers.set(timeoutId, {
+				timeoutId,
 				playerId,
 				eventType,
-				timeoutId,
+				timeoutHandle,
 				intervalId: undefined,
 				startTime,
 				totalPausedTime: 0,
 				timeout,
+				listener,
 				resolve: (value) => resolve(value as PlayerOperationResult[T]),
 				defaultValue: options.defaultValue,
 			});
 
-			// 设置倒计时间隔（如果需要广播）
 			if (this.globalTickCallback) {
-				this.broadcastAllTimeouts(); // 立即广播一次
+				this.broadcastAllTimeouts();
 				const intervalId = setInterval(() => {
 					this.broadcastAllTimeouts();
 				}, BROADCAST_INTERVAL);
-				// 更新定时器的 intervalId
-				const timerData = this.activeTimers.get(timerKey);
+				const timerData = this.activeTimers.get(timeoutId);
 				if (timerData) {
 					timerData.intervalId = intervalId;
 				}
 			}
 		});
 	}
-
 	/**
 	 * 广播所有活跃倒计时
 	 */
@@ -297,7 +318,10 @@ export class OperateListener {
 			const elapsed = now - timerData.startTime - timerData.totalPausedTime;
 			const remaining = Math.max(0, timerData.timeout - elapsed);
 			return {
+				timeoutId: timerData.timeoutId,
 				playerId: timerData.playerId,
+				eventType: timerData.eventType,
+				startedAt: timerData.startTime,
 				remainingMs: remaining,
 				totalTime: timerData.timeout,
 			};
@@ -317,7 +341,7 @@ export class OperateListener {
 		this.pauseStartedAt = Date.now();
 
 		this.activeTimers.forEach((timerData) => {
-			clearTimeout(timerData.timeoutId);
+			clearTimeout(timerData.timeoutHandle);
 			if (timerData.intervalId) {
 				clearInterval(timerData.intervalId);
 			}
@@ -343,18 +367,34 @@ export class OperateListener {
 
 			// 如果暂停期间已经超时，立即触发超时并结束等待（修复 Promise 永久悬挂）
 			if (remaining <= 0) {
-				this.removeAll(timerData.playerId, timerData.eventType);
 				this.clearTimer(timerKey);
-				this.timeoutCallback?.(timerData.playerId, timerData.eventType);
+				if (timerData.listener) this.remove(timerData.playerId, timerData.eventType, timerData.listener);
+				this.timeoutCallback?.({
+					timeoutId: timerData.timeoutId,
+					playerId: timerData.playerId,
+					eventType: timerData.eventType,
+					startedAt: timerData.startTime,
+					remainingMs: 0,
+					totalTime: timerData.timeout,
+				});
 				timerData.resolve?.(timerData.defaultValue);
+				this.broadcastAllTimeouts();
 				return;
 			}
 
 			// 重新设置超时定时器（到期后同样要触发超时回调并结束等待）
-			timerData.timeoutId = setTimeout(() => {
+			timerData.timeoutHandle = setTimeout(() => {
 				this.clearTimer(timerKey);
-				this.removeAll(timerData.playerId, timerData.eventType);
-				this.timeoutCallback?.(timerData.playerId, timerData.eventType);
+				if (timerData.listener) this.remove(timerData.playerId, timerData.eventType, timerData.listener);
+				this.timeoutCallback?.({
+					timeoutId: timerData.timeoutId,
+					playerId: timerData.playerId,
+					eventType: timerData.eventType,
+					startedAt: timerData.startTime,
+					remainingMs: 0,
+					totalTime: timerData.timeout,
+				});
+				this.broadcastAllTimeouts();
 				timerData.resolve?.(timerData.defaultValue);
 			}, remaining);
 
@@ -373,7 +413,7 @@ export class OperateListener {
 	 */
 	public clearAllTimers(): void {
 		this.activeTimers.forEach((timerData) => {
-			clearTimeout(timerData.timeoutId);
+			clearTimeout(timerData.timeoutHandle);
 			if (timerData.intervalId) {
 				clearInterval(timerData.intervalId);
 			}
@@ -397,7 +437,7 @@ export class OperateListener {
 		const timerData = this.activeTimers.get(timerKey);
 		if (!timerData) return;
 
-		clearTimeout(timerData.timeoutId);
+		clearTimeout(timerData.timeoutHandle);
 		if (timerData.intervalId) {
 			clearInterval(timerData.intervalId);
 		}

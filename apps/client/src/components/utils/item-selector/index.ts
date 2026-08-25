@@ -15,6 +15,8 @@ interface SelectorOptions<T = any> {
 	confirmText?: string;
 	cancelText?: string;
 	content?: string | object;
+	/** 当前游戏交互的唯一 ID；仅响应同一 ID 的超时事件。 */
+	timeoutId?: string;
 }
 
 export function showItemSelector(options: SelectorOptions): Promise<string[]> {
@@ -23,7 +25,8 @@ export function showItemSelector(options: SelectorOptions): Promise<string[]> {
 		const container = document.createElement("div");
 
 		// 2. 超时处理
-		const handleTimeout = () => {
+		const handleTimeout = (payload?: { timeoutId?: string }) => {
+			if (!options.timeoutId || payload?.timeoutId !== options.timeoutId) return;
 			reject([]);
 			destroy();
 		};
@@ -67,7 +70,7 @@ export function showItemSelector(options: SelectorOptions): Promise<string[]> {
 		}
 
 		// 8. 注册超时事件监听
-		useEventBus().once(GameEventType.TimeOut, handleTimeout);
+		useEventBus().on(GameEventType.TimeOut, handleTimeout);
 
 		// 9. 销毁逻辑
 		function destroy() {

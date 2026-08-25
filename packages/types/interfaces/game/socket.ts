@@ -497,6 +497,12 @@ export interface SocketMessageDataType {
 			remainingTime: number;
 			/** 总时间（秒） */
 			totalTime: number;
+			/** 当前展示的等待 ID；无活跃等待时不下发 */
+			timeoutId?: string;
+			/** 当前展示等待所属玩家 */
+			playerId?: string;
+			/** 当前展示等待的操作类型 */
+			eventType?: OperateType;
 		};
 	};
 
@@ -527,6 +533,8 @@ export interface SocketMessageDataType {
 			playerId: string;
 			/** 超时的事件类型 */
 			eventType: OperateType;
+			/** 本次超时的唯一 ID，客户端只能关闭同一 ID 的交互 */
+			timeoutId: string;
 		};
 	};
 
@@ -654,6 +662,8 @@ export interface SocketMessageDataType {
 			playerId: string;
 			/** 对话框选项 */
 			option: ConfirmDialogOption;
+			/** 本次交互的唯一 ID；无超时交互可省略。 */
+			timeoutId?: string;
 		};
 	};
 
@@ -670,6 +680,8 @@ export interface SocketMessageDataType {
 			playerId: string;
 			/** 对话框选项 */
 			option: TargetSelectDialogOption<TargetSelectType>;
+			/** 本次交互的唯一 ID；无超时交互可省略。 */
+			timeoutId?: string;
 		};
 	};
 
@@ -686,6 +698,8 @@ export interface SocketMessageDataType {
 			playerId: string;
 			/** 对话框选项 */
 			option: ItemSelectDialogOption;
+			/** 本次交互的唯一 ID；无超时交互可省略。 */
+			timeoutId?: string;
 		};
 	};
 
@@ -716,6 +730,8 @@ export interface SocketMessageDataType {
 			playerId: string;
 			/** 表单对话框选项 */
 			option: FormDialogOption<FormField<string, any>[]>;
+			/** 本次交互的唯一 ID；无超时交互可省略。 */
+			timeoutId?: string;
 		};
 	};
 
@@ -1092,16 +1108,18 @@ export interface PlayerOperationResult {
 		id: string;
 		/** 是否确认 */
 		confirm: boolean;
+		/** 本次交互的唯一 ID */
+		timeoutId?: string;
 	};
 
 	/** 目标选择对话框结果 */
-	[OperateType.TargetSelectDialogResult]: TargetSelectDialogResult<TargetSelectType>;
+	[OperateType.TargetSelectDialogResult]: TargetSelectDialogResult<TargetSelectType> & { timeoutId?: string };
 
 	/** 物品选择对话框结果 */
-	[OperateType.ItemSelectDialogResult]: ItemSelectDialogResult;
+	[OperateType.ItemSelectDialogResult]: ItemSelectDialogResult & { timeoutId?: string };
 
 	/** 表单对话框结果 */
-	[OperateType.FormDialogResult]: FormDialogResult<FormField<string, any>[]>;
+	[OperateType.FormDialogResult]: FormDialogResult<FormField<string, any>[]> & { timeoutId?: string };
 
 	/** 动态按钮点击 */
 	[OperateType.DynamicButtonClick]: DynamicButtonClickOperationResult;

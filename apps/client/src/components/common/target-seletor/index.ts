@@ -5,7 +5,7 @@ import { FPMessageBox } from "@src/components/utils/fp-message-box";
 
 export async function showTargetSelector(
 	type: TargetSelectType,
-	option?: { title?: string; confirmText?: string; cancelText?: string },
+	option?: { title?: string; confirmText?: string; cancelText?: string; timeoutId?: string },
 ) {
 	return new Promise<string[]>((resolve, reject) => {
 		let targetSelectedIdList: string[] = [];
@@ -19,6 +19,7 @@ export async function showTargetSelector(
 			}),
 			cancelText: option?.cancelText,
 			confirmText: option?.confirmText,
+			timeoutId: option?.timeoutId,
 		})
 			.then(() => {
 				console.log("🚀 ~ showTargetSelector ~ targetSelectedIdList:", targetSelectedIdList);

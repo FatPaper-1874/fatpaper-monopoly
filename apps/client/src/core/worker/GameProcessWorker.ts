@@ -1,4 +1,4 @@
-import { OperateListener } from "./class/OperateListener";
+import { OperateListener, type TimeoutInfo } from "./class/OperateListener";
 import {
 	WorkerCommMsg,
 	type GameProcessDebugState,
@@ -684,33 +684,31 @@ export class GameProcess implements IGameProcess {
 		operationListener.setGlobalTickCallback((timeouts) => {
 			if (timeouts.length === 0) {
 				this.roundRemainingTimeBroadcast(0, 0);
+				this.updateCurrentEventShowCountdown(false);
 				return;
 			}
 
-			// 找到最小的剩余时间（最紧急的操作），向上取整显示为整数秒
-			const minRemaining = Math.min(...timeouts.map((t) => t.remainingMs));
-			const minTotalTime = Math.min(...timeouts.map((t) => t.totalTime));
-			const remainingSeconds = Math.ceil(minRemaining / 1000);
-			const totalSeconds = Math.ceil(minTotalTime / 1000);
+			// 嵌套 show 调用时，UI 应展示最近发起的那一个等待，且剩余/总时间必须来自同一计时器。
+			const currentTimeout = timeouts.reduce((latest, timeout) =>
+				timeout.startedAt >= latest.startedAt ? timeout : latest,
+			);
+			const remainingSeconds = Math.ceil(currentTimeout.remainingMs / 1000);
+			const totalSeconds = Math.ceil(currentTimeout.totalTime / 1000);
 
-			// 发送倒计时消息
-			this.roundRemainingTimeBroadcast(remainingSeconds, totalSeconds);
-
-			// 如果有倒计时，通知客户端显示倒计时
-			if (remainingSeconds > 0) {
-				this.updateCurrentEventShowCountdown(true);
-			}
+			this.roundRemainingTimeBroadcast(remainingSeconds, totalSeconds, currentTimeout);
+			this.updateCurrentEventShowCountdown(remainingSeconds > 0);
 		});
 
 		// 绑定超时回调到 OperateListener
-		operationListener.setTimeoutCallback((playerId, eventType) => {
-			// 超时后通知客户端不显示倒计时
-			this.updateCurrentEventShowCountdown(false);
-
+		operationListener.setTimeoutCallback((timeout) => {
 			this.gameBroadcast(<ServerSocketMessage>{
 				type: SocketMsgType.RoundTimeOut,
 				source: SocketMsgSource.Server,
-				data: { playerId, eventType },
+				data: {
+					playerId: timeout.playerId,
+					eventType: timeout.eventType,
+					timeoutId: timeout.timeoutId,
+				},
 			});
 		});
 
@@ -3794,11 +3792,17 @@ export class GameProcess implements IGameProcess {
 		this.gameRuntimeStack.push(...gameEvents);
 	}
 
-	public roundRemainingTimeBroadcast = (remainingTime: number, totalTime: number) => {
+	public roundRemainingTimeBroadcast = (remainingTime: number, totalTime: number, timeout?: TimeoutInfo) => {
 		const msg: ServerSocketMessage = {
 			type: SocketMsgType.RemainingTime,
 			source: SocketMsgSource.Server,
-			data: { remainingTime, totalTime },
+			data: {
+				remainingTime,
+				totalTime,
+				timeoutId: timeout?.timeoutId,
+				playerId: timeout?.playerId,
+				eventType: timeout?.eventType,
+			},
 		};
 		this.gameBroadcast(msg);
 	};
@@ -3885,6 +3889,9 @@ export class GameProcess implements IGameProcess {
 			return (await this.makeAIDecision(player, OperateType.ConfirmDialogResult, { option })) as ConfirmDialogResult;
 		}
 
+		const timeoutId = randomString(16);
+		const timeout = config?.timeout ?? this.defaultTimeoutMs;
+
 		// 真实玩家，显示对话框
 		sendToUsers([playerId], {
 			type: SocketMsgType.ConfirmDialog,
@@ -3892,12 +3899,15 @@ export class GameProcess implements IGameProcess {
 			data: {
 				playerId,
 				option,
+				timeoutId,
 			},
 		});
 
 		// 使用带超时的方法
 		return (await operationListener.onceAsyncWithTimeout(playerId, OperateType.ConfirmDialogResult, {
-			timeout: config?.timeout ?? this.defaultTimeoutMs,
+			timeout,
+			timeoutId,
+			match: (result) => result.timeoutId === timeoutId,
 			defaultValue: config?.defaultValue ?? { id: playerId, confirm: false },
 		})) as ConfirmDialogResult;
 	}
@@ -3921,6 +3931,9 @@ export class GameProcess implements IGameProcess {
 			})) as TargetSelectDialogResult<I>;
 		}
 
+		const timeoutId = randomString(16);
+		const timeout = config?.timeout ?? this.defaultTimeoutMs;
+
 		// 真实玩家，显示对话框
 		sendToUsers([playerId], {
 			type: SocketMsgType.TargetSelectDialog,
@@ -3928,11 +3941,14 @@ export class GameProcess implements IGameProcess {
 			data: {
 				playerId,
 				option,
+				timeoutId,
 			},
 		});
 
 		return (await operationListener.onceAsyncWithTimeout(playerId, OperateType.TargetSelectDialogResult, {
-			timeout: config?.timeout ?? this.defaultTimeoutMs,
+			timeout,
+			timeoutId,
+			match: (result) => result.timeoutId === timeoutId,
 			defaultValue: config?.defaultValue ?? { target: [] },
 		})) as TargetSelectDialogResult<I>;
 	}
@@ -3956,6 +3972,9 @@ export class GameProcess implements IGameProcess {
 			})) as ItemSelectDialogResult;
 		}
 
+		const timeoutId = randomString(16);
+		const timeout = config?.timeout ?? this.defaultTimeoutMs;
+
 		// 真实玩家，显示对话框
 		sendToUsers([playerId], {
 			type: SocketMsgType.ItemSelectDialog,
@@ -3963,11 +3982,14 @@ export class GameProcess implements IGameProcess {
 			data: {
 				playerId,
 				option,
+				timeoutId,
 			},
 		});
 
 		return (await operationListener.onceAsyncWithTimeout(playerId, OperateType.ItemSelectDialogResult, {
-			timeout: config?.timeout ?? this.defaultTimeoutMs,
+			timeout,
+			timeoutId,
+			match: (result) => result.timeoutId === timeoutId,
 			defaultValue: config?.defaultValue ?? { selected: [] },
 		})) as ItemSelectDialogResult;
 	}
@@ -3998,6 +4020,9 @@ export class GameProcess implements IGameProcess {
 			})) as FormDialogResult<F>;
 		}
 
+		const timeoutId = randomString(16);
+		const timeout = config?.timeout ?? this.defaultTimeoutMs;
+
 		// 真实玩家，显示表单对话框
 		sendToUsers([playerId], {
 			type: SocketMsgType.FormDialog,
@@ -4005,12 +4030,15 @@ export class GameProcess implements IGameProcess {
 			data: {
 				playerId,
 				option,
+				timeoutId,
 			},
 		});
 
 		// 使用带超时的方法等待响应
 		return (await operationListener.onceAsyncWithTimeout(playerId, OperateType.FormDialogResult, {
-			timeout: config?.timeout ?? this.defaultTimeoutMs,
+			timeout,
+			timeoutId,
+			match: (result) => result.timeoutId === timeoutId,
 			defaultValue: config?.defaultValue ?? this.buildDefaultFormResult(option.fields),
 		})) as FormDialogResult<F>;
 	}

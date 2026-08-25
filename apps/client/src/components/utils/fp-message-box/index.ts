@@ -32,6 +32,8 @@ export interface MessageBoxOptions {
 	cancelText?: string;
 	appContext?: AppContext;
 	showCancel?: boolean;
+	/** 当前游戏交互的唯一 ID；仅响应同一 ID 的超时事件。 */
+	timeoutId?: string;
 	[key: string]: any;
 }
 
@@ -62,11 +64,9 @@ export function FPMessageBox(options: MessageBoxOptions) {
 			destroy();
 		};
 
-		const handleTimeout = () => {
-			// 这里的逻辑看你业务需求，通常超时算取消
+		const handleTimeout = (payload?: { timeoutId?: string }) => {
+			if (!options.timeoutId || payload?.timeoutId !== options.timeoutId) return;
 			reject(new TimeoutError());
-			// 如果超时，我们手动调用 close 逻辑吗？
-			// 由于我们拿不到组件内部的 visible 状态，这里最好是销毁
 			destroy();
 		};
 
@@ -103,6 +103,6 @@ export function FPMessageBox(options: MessageBoxOptions) {
 		}
 
 		// 8. 注册事件总线监听
-		useEventBus().once(GameEventType.TimeOut, handleTimeout);
+		useEventBus().on(GameEventType.TimeOut, handleTimeout);
 	});
 }

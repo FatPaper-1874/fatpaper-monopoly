@@ -590,7 +590,7 @@ const handleRemainingTime: ServerMessageHandler<SocketMsgType.RemainingTime> = (
  */
 const handleRoundTimeOut: ServerMessageHandler<SocketMsgType.RoundTimeOut> = (msg) => {
 	if (!msg.data) return;
-	const { playerId } = msg.data;
+	const { playerId, timeoutId } = msg.data;
 	const utilStore = useUtil();
 	const currentUserId = getCurrentClientPlayerId();
 
@@ -601,7 +601,7 @@ const handleRoundTimeOut: ServerMessageHandler<SocketMsgType.RoundTimeOut> = (ms
 		utilStore.showCountdown = false; // 超时后不显示倒计时
 		// 将剩余时间设置为 0，确保 UI 正确更新
 		utilStore.waitingFor = { ...utilStore.waitingFor, remainingTime: 0 };
-		useEventBus().emit(GameEventType.TimeOut);
+		useEventBus().emit(GameEventType.TimeOut, { timeoutId });
 	}
 };
 
@@ -730,14 +730,14 @@ const handleGameResume: ServerMessageHandler<SocketMsgType.ResumeGame> = () => {
 
 const handleConfirmDialog: ServerMessageHandler<SocketMsgType.ConfirmDialog> = (msg, client) => {
 	const data = msg.data;
-	FPMessageBox(data.option)
+	FPMessageBox({ ...data.option, timeoutId: data.timeoutId })
 		.then(() => {
 			client.sendMsg({
 				type: SocketMsgType.Operation,
 				source: SocketMsgSource.Client,
 				data: {
 					operateType: OperateType.ConfirmDialogResult,
-					data: { id: data.playerId, confirm: true },
+					data: { id: data.playerId, confirm: true, timeoutId: data.timeoutId },
 				},
 			});
 		})
@@ -747,7 +747,7 @@ const handleConfirmDialog: ServerMessageHandler<SocketMsgType.ConfirmDialog> = (
 				source: SocketMsgSource.Client,
 				data: {
 					operateType: OperateType.ConfirmDialogResult,
-					data: { id: data.playerId, confirm: false },
+					data: { id: data.playerId, confirm: false, timeoutId: data.timeoutId },
 				},
 			});
 		});
@@ -774,6 +774,7 @@ const handleFormDialog: ServerMessageHandler<SocketMsgType.FormDialog> = (msg, c
 		form: formSchema,
 		confirmText: data.option.confirmText || "提交",
 		cancelText: data.option.cancelText || "取消",
+		timeoutId: data.timeoutId,
 	})
 		.then((formData) => {
 			// 用户提交，formData 包含表单数据
@@ -784,6 +785,7 @@ const handleFormDialog: ServerMessageHandler<SocketMsgType.FormDialog> = (msg, c
 					operateType: OperateType.FormDialogResult,
 					data: {
 						id: data.playerId,
+						timeoutId: data.timeoutId,
 						submitted: true,
 						...formData,
 					},
@@ -801,6 +803,7 @@ const handleFormDialog: ServerMessageHandler<SocketMsgType.FormDialog> = (msg, c
 					operateType: OperateType.FormDialogResult,
 					data: {
 						id: data.playerId,
+						timeoutId: data.timeoutId,
 						submitted: false,
 						...defaultData,
 					},
@@ -811,14 +814,14 @@ const handleFormDialog: ServerMessageHandler<SocketMsgType.FormDialog> = (msg, c
 
 const handleTargetSelect: ServerMessageHandler<SocketMsgType.TargetSelectDialog> = (msg, client) => {
 	const data = msg.data;
-	showTargetSelector(data.option.type)
+	showTargetSelector(data.option.type, { ...data.option, timeoutId: data.timeoutId })
 		.then((res) => {
 			client.sendMsg({
 				type: SocketMsgType.Operation,
 				source: SocketMsgSource.Client,
 				data: {
 					operateType: OperateType.TargetSelectDialogResult,
-					data: { target: Array.from(res) },
+					data: { target: Array.from(res), timeoutId: data.timeoutId },
 				},
 			});
 		})
@@ -828,7 +831,7 @@ const handleTargetSelect: ServerMessageHandler<SocketMsgType.TargetSelectDialog>
 				source: SocketMsgSource.Client,
 				data: {
 					operateType: OperateType.TargetSelectDialogResult,
-					data: { target: [] },
+					data: { target: [], timeoutId: data.timeoutId },
 				},
 			});
 		});
@@ -836,14 +839,14 @@ const handleTargetSelect: ServerMessageHandler<SocketMsgType.TargetSelectDialog>
 
 const handleItemSelectDialog: ServerMessageHandler<SocketMsgType.ItemSelectDialog> = (msg, client) => {
 	const data = msg.data;
-	showItemSelector(data.option)
+	showItemSelector({ ...data.option, timeoutId: data.timeoutId })
 		.then((res) => {
 			client.sendMsg({
 				type: SocketMsgType.Operation,
 				source: SocketMsgSource.Client,
 				data: {
 					operateType: OperateType.ItemSelectDialogResult,
-					data: { selected: Array.from(res) },
+					data: { selected: Array.from(res), timeoutId: data.timeoutId },
 				},
 			});
 		})
@@ -853,7 +856,7 @@ const handleItemSelectDialog: ServerMessageHandler<SocketMsgType.ItemSelectDialo
 				source: SocketMsgSource.Client,
 				data: {
 					operateType: OperateType.ItemSelectDialogResult,
-					data: { selected: [] },
+					data: { selected: [], timeoutId: data.timeoutId },
 				},
 			});
 		});
