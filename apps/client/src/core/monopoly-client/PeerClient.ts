@@ -108,7 +108,6 @@ export class PeerClient {
 
 			// 注册 PeerJS 生命周期事件
 			peer.on("open", (id) => {
-				console.log("ice服务器连接成功, ID:", id);
 				connectionDiagnostics.logPeerEvent("Peer.open", `peerId=${id}`);
 				connectionDiagnostics.stageEnd("SignalingConnect", { peerId: id });
 				resolve(peer);
@@ -290,12 +289,10 @@ export class PeerClient {
 
 			const mode = localCandidateType === "relay" ? "relay" : "p2p";
 			useUtil().connectionMode = mode;
-			console.log(`[PeerClient] 连接模式: ${mode} (实际候选类型: ${localCandidateType || "未知"}, 有relay候选: ${hasRelayCandidate})`);
 		} catch (e) {
 			// getStats 失败时回退到 hasRelayCandidate 判断
 			const mode = hasRelayCandidate ? "relay" : "p2p";
 			useUtil().connectionMode = mode;
-			console.log(`[PeerClient] 连接模式(回退): ${mode} (getStats失败: ${e})`);
 		}
 	}
 

@@ -28,7 +28,6 @@ class AudioManager {
 	private autoMusic: boolean = true;
 
 	constructor() {
-		console.log('[AudioManager] 构造函数被调用', new Error().stack);
 		this.initSounds();
 		this.initBGM();
 	}
@@ -52,7 +51,6 @@ class AudioManager {
 	 * 初始化背景音乐
 	 */
 	private initBGM(): void {
-		console.log('[AudioManager] initBGM 被调用', { bgmPath: getBGMPath(), existingBgm: !!this.bgm });
 		this.bgm = new Howl({
 			src: [getBGMPath()],
 			volume: 0.5,
@@ -60,7 +58,6 @@ class AudioManager {
 			preload: true,
 			autoplay: false,
 		});
-		console.log('[AudioManager] BGM Howl 实例已创建', { howl: this.bgm });
 	}
 
 	/**
@@ -92,7 +89,6 @@ class AudioManager {
 	 * 播放背景音乐
 	 */
 	public playBGM(): void {
-		console.log('[AudioManager] playBGM 被调用', { bgmExists: !!this.bgm, isPlaying: this.bgm?.playing(), stack: new Error().stack });
 		if (!this.bgm) {
 			return;
 		}
@@ -111,7 +107,6 @@ class AudioManager {
 		if (!this.bgm.playing()) {
 			const actualVolume = this.volumeConfig.master * this.volumeConfig.bgm;
 			this.bgm.volume(actualVolume);
-			console.log("[AudioManager] bgm.play() 调用 - playBGM正常路径");
 			this.bgm.play();
 		}
 	}
@@ -141,7 +136,6 @@ class AudioManager {
 	 * @param duration 淡入时长（秒）
 	 */
 	public fadeInBGM(duration: number = 1): void {
-		console.log('[AudioManager] fadeInBGM 被调用', { duration, bgmExists: !!this.bgm, isPlaying: this.bgm?.playing(), stack: new Error().stack });
 		if (!this.bgm) {
 			return;
 		}
@@ -151,11 +145,9 @@ class AudioManager {
 			// 静音状态：播放但音量为0
 			if (!this.bgm.playing()) {
 				this.bgm.volume(0);
-				console.log("[AudioManager] bgm.play() 调用 - fadeInBGM静音路径");
 				this.bgm.play();
 			} else {
 				this.bgm.volume(0);
-				console.log("[AudioManager] BGM已在播放（静音状态），仅设置音量为0");
 			}
 			return;
 		}
@@ -163,7 +155,6 @@ class AudioManager {
 		// 未静音：正常淡入播放
 		const actualVolume = this.volumeConfig.master * this.volumeConfig.bgm;
 		this.bgm.volume(0);
-			console.log("[AudioManager] bgm.play() 调用 - fadeInBGM正常路径");
 			this.bgm.play();
 			this.bgm.fade(0, actualVolume, duration * 1000);
 	}

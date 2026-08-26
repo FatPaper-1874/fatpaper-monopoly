@@ -477,10 +477,8 @@ async function handleMessage(data: WorkerCommMsg) {
 			break;
 		case WorkerCommType.DebugGetState:
 			{
-				console.log("[DebugGetState] received");
 				try {
 					const state = gameProcess ? gameProcess.getDebugState() : null;
-					console.log("[DebugGetState] state serialized, players:", state?.players?.length);
 					self.postMessage(<WorkerCommMsg>{
 						type: WorkerCommType.DebugStateResponse,
 						data: { state },
@@ -496,7 +494,6 @@ async function handleMessage(data: WorkerCommMsg) {
 			break;
 		case WorkerCommType.GMAction:
 			{
-				console.log("[GMAction] received:", data.data);
 				try {
 					const action = data.data as GMAction;
 					const response = await handleGMAction(action, gameProcess);
@@ -674,9 +671,6 @@ export class GameProcess implements IGameProcess {
 			});
 		}
 
-		console.dir(gameSetting);
-		console.dir(gameSetting.initMoney.value);
-
 		// 组合完整的类型定义（包含 GameProcessTypes 和 extraLibs）
 		this.fullTypes = `${GameProcessTypes}\n${mapData.extraLibs || ""}`;
 
@@ -714,7 +708,6 @@ export class GameProcess implements IGameProcess {
 
 		// 暂停/恢复：房主切后台自动触发(deviceStatus)，也可通过设置界面手动触发
 		operationListener.on(roomOwnerId, OperateType.PauseGame, () => {
-			console.log("PauseGame");
 			this.setGamePaused(true);
 			this.gameBroadcast(<ServerSocketMessage>{
 				type: SocketMsgType.PauseGame,
@@ -725,7 +718,6 @@ export class GameProcess implements IGameProcess {
 			});
 		});
 		operationListener.on(roomOwnerId, OperateType.ResumeGame, () => {
-			console.log("ResumeGame");
 			this.setGamePaused(false);
 			this.gameBroadcast(<ServerSocketMessage>{
 				type: SocketMsgType.ResumeGame,
@@ -1087,23 +1079,7 @@ export class GameProcess implements IGameProcess {
 
 		this.aiDynamicButtonInFlight.add(playerId);
 		try {
-			console.log(`${AI_LOG_PREFIX} dynamic-button request`, {
-				decisionId: request.metadata?.decisionId,
-				playerId,
-				title: request.title,
-				scene: request.scene,
-				options: request.options.map((option) => ({
-					id: option.id,
-					label: option.label,
-					actionType: option.actionType,
-				})),
-			});
 			const selection = await this.runAIDecision(player, request);
-			console.log(`${AI_LOG_PREFIX} dynamic-button selection`, {
-				decisionId: request.metadata?.decisionId,
-				playerId,
-				selection,
-			});
 			const selectedOptionId = selection.optionId;
 			const selectedOption = request.options.find((option) => option.id === selectedOptionId);
 			const buttonId = String(selectedOption?.payload?.id || selectedOptionId || "");
@@ -1117,12 +1093,6 @@ export class GameProcess implements IGameProcess {
 				request,
 				selection,
 				outcome: "dynamic-button",
-			});
-			console.log(`${AI_LOG_PREFIX} execute dynamic button`, {
-				decisionId: request.metadata?.decisionId,
-				playerId,
-				buttonId,
-				label: selectedOption.label,
 			});
 			await this.handleDynamicButtonClick(playerId, buttonId);
 		} finally {
@@ -1234,10 +1204,6 @@ export class GameProcess implements IGameProcess {
 			});
 			if (!request) {
 				if (allowRollDice) {
-					console.log(`${AI_LOG_PREFIX} pre-roll broker auto-roll`, {
-						playerId,
-						reason: "no_active_actions",
-					});
 					this.closeAIPreRollOperationSessionAndEmit(
 						playerId,
 						sessionId,
@@ -1249,31 +1215,8 @@ export class GameProcess implements IGameProcess {
 			}
 			this.ensureAIDecisionMetadata(request, playerId, `pre-roll:${request.title}`);
 
-			console.log(`${AI_LOG_PREFIX} pre-roll request`, {
-				decisionId: request.metadata?.decisionId,
-				playerId,
-				sessionId,
-				title: request.title,
-				scene: request.scene,
-				options: request.options.map((option) => ({
-					id: option.id,
-					label: option.label,
-					actionType: option.actionType,
-					actionKind: option.payload?.actionKind,
-				})),
-			});
 			const selection = await this.runAIDecision(player, request);
-			console.log(`${AI_LOG_PREFIX} pre-roll selection`, {
-				decisionId: request.metadata?.decisionId,
-				playerId,
-				sessionId,
-				selection,
-			});
 			if (!this.isAIPreRollOperationSessionActive(playerId, sessionId)) {
-				console.log(`${AI_LOG_PREFIX} stale pre-roll selection ignored`, {
-					playerId,
-					sessionId,
-				});
 				return;
 			}
 
@@ -1330,13 +1273,6 @@ export class GameProcess implements IGameProcess {
 					request,
 					selection,
 					outcome: "dynamic-button",
-				});
-				console.log(`${AI_LOG_PREFIX} pre-roll execute dynamic button`, {
-					decisionId: request.metadata?.decisionId,
-					playerId,
-					sessionId,
-					buttonId,
-					label: selectedOption.label,
 				});
 				await this.handleDynamicButtonClick(playerId, buttonId);
 				if (!this.isAIPreRollOperationSessionActive(playerId, sessionId)) {
@@ -1396,14 +1332,6 @@ export class GameProcess implements IGameProcess {
 					request,
 					selection,
 					outcome: "chance-card",
-				});
-				console.log(`${AI_LOG_PREFIX} pre-roll emit chance card`, {
-					decisionId: request.metadata?.decisionId,
-					playerId,
-					sessionId,
-					chanceCardId,
-					label: selectedOption.label,
-					targetIdList,
 				});
 				this.closeAIPreRollOperationSessionAndEmit(playerId, sessionId, OperateType.UseChanceCard, {
 					chanceCardId,
@@ -2716,29 +2644,12 @@ export class GameProcess implements IGameProcess {
 	): Promise<PlayerOperationResult[T]> {
 		const request = this.buildAIDecisionRequest(player, operationType, input?.option);
 		if (!request) {
-			console.log(`${AI_LOG_PREFIX} no request built`, {
-				playerId: player.id,
-				operationType,
-			});
 			return this.buildAIDefaultOperationResult(player, operationType, input?.option, input?.defaultValue);
 		}
 
 		this.attachAIDecisionChainContext(player, request);
 		this.ensureAIDecisionMetadata(request, player.id, `${String(operationType)}:${request.title}`);
 
-		console.log(`${AI_LOG_PREFIX} structured request`, {
-			decisionId: request.metadata?.decisionId,
-			playerId: player.id,
-			operationType,
-			title: request.title,
-			scene: request.scene,
-			chainContext: request.metadata?.chainContext,
-			options: request.options.map((option) => ({
-				id: option.id,
-				label: option.label,
-				actionType: option.actionType,
-			})),
-		});
 		const selection = await this.runAIDecision(player, request);
 		const result = this.mapAIDecisionSelectionToResult(player, request, selection, input?.option, input?.defaultValue);
 		this.rememberAIDecisionChain(player.id, request, selection);
@@ -2747,13 +2658,6 @@ export class GameProcess implements IGameProcess {
 			request,
 			selection,
 			outcome: "mapped-operation",
-		});
-		console.log(`${AI_LOG_PREFIX} mapped result`, {
-			decisionId: request.metadata?.decisionId,
-			playerId: player.id,
-			operationType,
-			selection,
-			result,
 		});
 		return result;
 	}
@@ -3372,19 +3276,10 @@ export class GameProcess implements IGameProcess {
 	private async buildAIChanceCardTargetIds(player: Player, chanceCardId: string): Promise<string[]> {
 		const chanceCard = player.getCardById(chanceCardId);
 		if (!chanceCard) {
-			console.log(`${AI_LOG_PREFIX} chance card target build failed`, {
-				playerId: player.id,
-				chanceCardId,
-				reason: "card_not_found",
-			});
 			return [];
 		}
 
 		if (chanceCard.getType() === TargetSelectType.ToSelf) {
-			console.log(`${AI_LOG_PREFIX} chance card target self`, {
-				playerId: player.id,
-				chanceCardId,
-			});
 			return [];
 		}
 
@@ -3404,14 +3299,6 @@ export class GameProcess implements IGameProcess {
 			outcome: "chance-card-target",
 		});
 		const targetIds = selection.optionIds || (selection.optionId ? [selection.optionId] : []);
-		console.log(`${AI_LOG_PREFIX} chance card target selection`, {
-			decisionId: request.metadata?.decisionId,
-			playerId: player.id,
-			chanceCardId,
-			title: request.title,
-			selection,
-			targetIds,
-		});
 		return targetIds;
 	}
 
@@ -3882,10 +3769,6 @@ export class GameProcess implements IGameProcess {
 
 		// 如果玩家是AI托管，直接返回决策，不显示对话框
 		if (player?.isAI) {
-			console.log(`${AI_LOG_PREFIX} intercept confirm dialog for AI`, {
-				playerId,
-				title: option.title,
-			});
 			return (await this.makeAIDecision(player, OperateType.ConfirmDialogResult, { option })) as ConfirmDialogResult;
 		}
 
@@ -3921,11 +3804,6 @@ export class GameProcess implements IGameProcess {
 
 		// 如果玩家是AI托管，直接返回决策，不显示对话框
 		if (player?.isAI) {
-			console.log(`${AI_LOG_PREFIX} intercept target dialog for AI`, {
-				playerId,
-				title: option.title,
-				type: option.type,
-			});
 			return (await this.makeAIDecision(player, OperateType.TargetSelectDialogResult, {
 				option,
 			})) as TargetSelectDialogResult<I>;
@@ -3962,11 +3840,6 @@ export class GameProcess implements IGameProcess {
 
 		// 如果玩家是AI托管，直接返回决策，不显示对话框
 		if (player?.isAI) {
-			console.log(`${AI_LOG_PREFIX} intercept item dialog for AI`, {
-				playerId,
-				title: option.title,
-				itemCount: option.itemList?.length || 0,
-			});
 			return (await this.makeAIDecision(player, OperateType.ItemSelectDialogResult, {
 				option,
 			})) as ItemSelectDialogResult;
@@ -4010,11 +3883,6 @@ export class GameProcess implements IGameProcess {
 
 		// 如果玩家是 AI 托管，直接返回决策，不显示对话框
 		if (player?.isAI) {
-			console.log(`${AI_LOG_PREFIX} intercept form dialog for AI`, {
-				playerId,
-				title: option.title,
-				fieldCount: option.fields?.length || 0,
-			});
 			return (await this.makeAIDecision(player, OperateType.FormDialogResult, {
 				option,
 			})) as FormDialogResult<F>;
@@ -4256,11 +4124,6 @@ export class GameProcess implements IGameProcess {
 	public async requestAIDecision(playerId: string, prompt: AIDecisionPrompt): Promise<AIDecisionSelection | null> {
 		const player = this.players.get(playerId);
 		if (!player?.isAI) {
-			console.log(`${AI_LOG_PREFIX} requestAIDecision ignored`, {
-				playerId,
-				reason: "player_not_ai",
-				title: prompt.title,
-			});
 			return null;
 		}
 
@@ -4272,30 +4135,12 @@ export class GameProcess implements IGameProcess {
 		this.ensureAIDecisionMetadata(request, playerId, `scripted:${request.title}`);
 
 		try {
-			console.log(`${AI_LOG_PREFIX} scripted request`, {
-				decisionId: request.metadata?.decisionId,
-				playerId,
-				title: request.title,
-				operationType: request.operationType,
-				scene: request.scene,
-				options: request.options.map((option) => ({
-					id: option.id,
-					label: option.label,
-					actionType: option.actionType,
-				})),
-			});
 			const selection = await this.runAIDecision(player, request);
 			aiManager.feedback({
 				playerId,
 				request,
 				selection,
 				outcome: "scripted",
-			});
-			console.log(`${AI_LOG_PREFIX} scripted selection`, {
-				decisionId: request.metadata?.decisionId,
-				playerId,
-				title: request.title,
-				selection,
 			});
 			return selection;
 		} finally {
@@ -4597,7 +4442,6 @@ export class GameProcess implements IGameProcess {
 			player.setIsOffline(true);
 			// 启用AI托管
 			player.isAI = true;
-			console.log(`[AI托管] 玩家 ${player.name} 离线，启用AI托管`);
 			this.gameDataBroadcast();
 		}
 	}
@@ -4616,7 +4460,6 @@ export class GameProcess implements IGameProcess {
 			player.setIsOffline(false);
 			// 取消AI托管
 			player.isAI = false;
-			console.log(`[AI托管] 玩家 ${player.name} 重连，取消AI托管`);
 			sendToUsers([userId], {
 				type: SocketMsgType.GameStart,
 				source: SocketMsgSource.Server,
@@ -4642,7 +4485,6 @@ export class GameProcess implements IGameProcess {
 			});
 			this.gameDataBroadcast();
 		} else {
-			console.log("奇怪的玩家 in game");
 		}
 	}
 

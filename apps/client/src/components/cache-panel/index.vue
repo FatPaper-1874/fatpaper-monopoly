@@ -78,7 +78,6 @@ const openFolder = () => {
 	win.platformAPI
 		?.openMapCacheFolder?.()
 		.then((path: string) => {
-			console.log("缓存文件夹已打开:", path);
 		})
 		.catch(() => {
 			FpMessage({ type: "error", message: "无法打开缓存文件夹" });

@@ -9,13 +9,10 @@ import type { UpdateAPI } from "../types";
 export function createWebUpdateAPI(): UpdateAPI {
 	return {
 		checkForUpdate: async () => {
-			console.log("[Update] 浏览器环境不支持自动更新");
 		},
 		startDownload: async () => {
-			console.log("[Update] 浏览器环境不支持自动更新");
 		},
 		quitAndInstall: async () => {
-			console.log("[Update] 浏览器环境不支持自动更新");
 		},
 		onUpdateStatus: () => {
 			return () => {};

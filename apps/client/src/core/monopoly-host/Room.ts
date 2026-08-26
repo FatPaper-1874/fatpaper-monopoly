@@ -902,7 +902,6 @@ export class Room {
 				msg: { type: "success", content: `${oldUser.username}重新连接` },
 			});
 		} else {
-			console.log("奇怪的玩家 in room");
 		}
 	}
 
@@ -1254,13 +1253,11 @@ export class Room {
 	// DevTools debug bridge
 	(window as any).__gpBridge = {
 		requestState: () => {
-			console.log("[gpBridge] requestState called, worker:", !!this.gameProcessWorker);
 			if (this.gameProcessWorker) {
 				this.gameProcessWorker.postMessage({
 					type: WorkerCommType.DebugGetState,
 					data: undefined,
 				});
-				console.log("[gpBridge] DebugGetState sent to worker");
 			}
 		},
 		onState: null as ((state: any) => void) | null,
@@ -1275,7 +1272,6 @@ export class Room {
 			u.isReady = true;
 		});
 		this.roomInfoBroadcast();
-		console.log("🚀 ~ Room ~ handleGameOver ~ 游戏结束啦:");
 		this.gameProcessWorker && this.gameProcessWorker.terminate();
 		this.gameProcessWorker = null;
 		this.isStarted = false;
@@ -1549,7 +1545,6 @@ export class Room {
 			SocketMsgType.MapChunkEnd,
 			{ success: true, mapLoadSessionId },
 		);
-		console.log(`[MapTransfer] Sent ${chunks.length} chunks to client ${clientId}`);
 	}
 
 	public requestSave(): void {
@@ -2670,7 +2665,6 @@ export class Room {
 	 * 处理 GameProcessReady 消息
 	 */
 	private handleGameProcessReady(): void {
-		console.log("GameProcess已就绪");
 
 		// 清除初始化超时定时器
 		this.clearInitTimeout();

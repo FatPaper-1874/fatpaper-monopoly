@@ -226,7 +226,6 @@ export class MonopolyHost {
 			});
 
 			// conn.on("iceStateChanged", (state) => {
-			// 	console.log("🚀 ~ MonopolyHost ~ conn.on ~ iceStateChanged:");
 			// 	if (clientUserId && (state === "closed" || state === "disconnected")) {
 			// 		this.room.leave(clientUserId);
 			// 		this.clientList.delete(clientUserId);
@@ -254,7 +253,6 @@ export class MonopolyHost {
 
 			const peer = new Peer(peerOptions);
 			peer.on("open", () => {
-				console.info("MonopolyHost开启成功");
 				connectionDiagnostics.logPeerEvent("Host.Peer.open", `peerId=${peer.id}`);
 				resolve(peer);
 			});
@@ -322,7 +320,6 @@ export class MonopolyHost {
 					);
 					this.hostLeaseToken = reclaimed.hostLeaseToken;
 					this.heartbeatFailures = 0;
-					console.info("[MonopolyHost] 房间注册已恢复");
 					return { ok: true, reclaimed: true };
 				} catch (reclaimError: any) {
 					console.warn("[MonopolyHost] 房间夺回失败", reclaimError);

@@ -89,7 +89,6 @@ async function executeWithRetry<T>(
 			if (attempt < retry.maxRetries && isRetryableError(lastError, retry)) {
 				// 指数退避：每次重试延迟翻倍
 				const delayTime = retry.retryDelay * Math.pow(2, attempt);
-				console.log(`[asyncMission] 任务失败，${delayTime}ms 后进行第 ${attempt + 1} 次重试:`, lastError.message);
 				await delay(delayTime);
 				continue;
 			}
@@ -100,7 +99,6 @@ async function executeWithRetry<T>(
 
 	// 所有重试都失败，尝试降级
 	if (fallback) {
-		console.log(`[asyncMission] 所有重试失败，执行降级函数`);
 		try {
 			return await fallback();
 		} catch (fallbackError) {

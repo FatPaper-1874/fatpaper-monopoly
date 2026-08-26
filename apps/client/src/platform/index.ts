@@ -50,5 +50,4 @@ export async function initPlatform(): Promise<void> {
 		}
 	}
 
-	console.log(`[Platform] 已初始化: ${type}`);
 }

@@ -287,7 +287,6 @@ const handleRoomListReply: ServerMessageHandler<SocketMsgType.RoomList> = (msg) 
 
 const handleJoinRoomReply: ServerMessageHandler<SocketMsgType.JoinRoom> = (msg) => {
 	const roomId = msg.data.roomId;
-	console.log("🚀 ~ handleJoinRoomReply ~ roomId:", roomId);
 	if (roomId) {
 		useRoomInfo().roomId = roomId;
 		router.replace({ name: "room" });
@@ -1117,7 +1116,6 @@ const handleMapChunkStart: ServerMessageHandler<SocketMsgType.MapChunkStart> = (
 		data.totalBytes ? `地图加载中... 0 B / ${formatBytes(data.totalBytes)}` : "地图加载中...",
 		0,
 	);
-	console.log(`[MapTransfer] Started receiving ${data.totalChunks} chunks (${formatBytes(data.totalBytes ?? 0)})`);
 };
 
 const handleMapChunk: ServerMessageHandler<SocketMsgType.MapChunk> = (msg) => {

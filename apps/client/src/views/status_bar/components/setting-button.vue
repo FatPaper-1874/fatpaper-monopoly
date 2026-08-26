@@ -46,7 +46,6 @@ const openLogsFolder = () => {
 	window.platformAPI
 		?.openLogsFolder?.()
 		.then((path: string) => {
-			console.log("日志文件夹已打开:", path);
 		})
 		.catch(() => {
 			FpMessage({ type: "error", message: "无法打开日志文件夹" });
@@ -269,7 +268,6 @@ const applySettings = () => {
 		// 保存到 localStorage
 		try {
 			localStorage.setItem("graphicQuality", quality);
-			console.log("[画质设置] 已保存到 localStorage:", quality);
 		} catch (e) {
 			console.warn("[画质设置] localStorage 保存失败:", e);
 		}
@@ -281,7 +279,6 @@ const applySettings = () => {
 		eventBus.emit("graphics:quality:change", { quality });
 
 		// 显示提示
-		console.log(`[画质设置] 画质已设置为：${qualityLabels[quality]}画质`);
 	}
 
 	// 应用阴影设置

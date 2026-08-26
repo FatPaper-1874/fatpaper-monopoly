@@ -249,7 +249,6 @@ export class OperateListener {
 			match?: (data: PlayerOperationResult[T]) => boolean;
 		},
 	): Promise<PlayerOperationResult[T]> {
-		console.log("🚀 ~ OperateListener ~ onceAsyncWithTimeout ~ options.timeout:", options.timeout)
 		const timeout = options.timeout ?? DEFAULT_TIMEOUT;
 		const timeoutId = options.timeoutId ?? this.generateTimerKey();
 		const startTime = Date.now();

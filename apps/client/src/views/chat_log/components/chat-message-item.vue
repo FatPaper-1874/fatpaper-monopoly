@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ChatMessage } from "@mine-monopoly/types";
-import { computed, onMounted, onUpdated } from "vue";
+import { computed } from "vue";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { __PROTOCOL__ } from "@src/../global.config";
 
@@ -11,13 +11,6 @@ const avatarSrc = computed(() => {
 });
 
 const color = user?.color;
-onMounted(() => {
-	console.log("🚀 ~ onMounted ~ onMounted:");
-});
-
-onUpdated(() => {
-	console.log("🚀 ~ onUpdated ~ onUpdated:");
-});
 </script>
 
 <template>

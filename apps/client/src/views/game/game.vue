@@ -128,7 +128,6 @@ import LocalPartyTurnHandoff from "./components/local-party-turn-handoff.vue";
 				throw wrapGameInitError("game-page-mounted", new Error("游戏画布元素未找到"));
 			}
 			const mapData = JSON.parse(JSON.stringify(mapDataStore.$state)) as GameMap;
-			console.log("🚀 ~ mapData:", mapData);
 			gameRenderer = new GameRenderer(canvas, container, mapData);
 			await gameRenderer.init();
 

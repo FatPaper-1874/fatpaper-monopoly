@@ -189,11 +189,9 @@ export class GameRenderer {
 
 				// 应用初始像素比
 				const initialPixelRatio = settingStore.getPixelRatio();
-				console.log("[画质设置] 初始化像素比:", initialPixelRatio);
 				this.renderer.setPixelRatio(initialPixelRatio);
 
 				// 初始化阴影设置
-				console.log("[阴影设置] 初始化阴影设置:", settingStore.enableShadow ? "开启" : "关闭");
 				this.renderer.toneMapping = THREE.LinearToneMapping;
 				this.renderer.toneMappingExposure = 1.1;
 				this.renderer.shadowMap.enabled = settingStore.enableShadow;
@@ -604,7 +602,6 @@ export class GameRenderer {
 			const allChanceCards = mapData.chanceCards || [];
 
 			if (allChanceCards.length === 0) {
-				console.log("[机会卡] 没有找到机会卡数据，跳过预加载");
 				return;
 			}
 
@@ -619,24 +616,17 @@ export class GameRenderer {
 
 			// 0. 确保字体加载完成，避免渲染时重复等待字体解析
 			await document.fonts.ready;
-			console.log(`[机会卡性能] fonts.ready: ${performance.now() - t0}ms`);
-
 			// 1. 并发预加载所有图标（预热浏览器缓存，消除后续1s超时等待）
 			const allIconUrls = preloadData.map((d) => d.iconUrl);
 			loadingMask.text = `正在预加载机会卡图标...`;
 			const t1 = performance.now();
 			await ChanceCardTextureGenerator.preloadIcons(allIconUrls);
-			console.log(`[机会卡性能] preloadIcons (${allIconUrls.length}张): ${performance.now() - t1}ms`);
-
 			// 2. 并发生成纹理（4张同时处理）
 			await ChanceCardTextureGenerator.preloadLiteFont();
 			const t2 = performance.now();
 			await ChanceCardTextureGenerator.preloadTexturesConcurrent(preloadData, 4, (completed, total, cardName) => {
 				loadingMask.text = `正在预加载机会卡 (${completed}/${total}): ${cardName}`;
 			});
-			console.log(`[机会卡性能] preloadTextures (${total}张): ${performance.now() - t2}ms`);
-			console.log(`[机会卡性能] 总耗时: ${performance.now() - t0}ms`);
-
 			loadingMask.text = "机会卡纹理预加载完成";
 		} catch (error) {
 			console.error("[机会卡] 预加载失败:", error);
@@ -1165,7 +1155,6 @@ export class GameRenderer {
 		// 监听当前回合玩家变化
 		useEventBus().on("game-currentPlayerIdInRound", (newPlayerId: string, oldPlayerId: string) => {
 			if (!this.isTurnFocusEnabled || !newPlayerId || newPlayerId === oldPlayerId) return;
-			console.log("[相机] 回合切换:", oldPlayerId, "->", newPlayerId);
 			this.focusPlayerById(newPlayerId);
 		});
 
@@ -1173,7 +1162,6 @@ export class GameRenderer {
 
 		// 监听画质变化事件
 		useEventBus().on("graphics:quality:change", ({ quality }: { quality: "low" | "medium" | "high" }) => {
-			console.log("[画质设置] 接收到画质变化事件:", quality);
 			const ratioMap = { low: 0.85, medium: 1.0, high: 2.0 };
 			const newPixelRatio = window.devicePixelRatio * ratioMap[quality];
 			this.applyPixelRatio(newPixelRatio);
@@ -1181,18 +1169,15 @@ export class GameRenderer {
 
 		// 监听阴影变化事件
 		useEventBus().on("graphics:shadow:change", ({ enable }: { enable: boolean }) => {
-			console.log("[阴影设置] 接收到阴影变化事件:", enable);
 			this.applyShadowSetting(enable);
 		});
 
 		// 监听视角锁定变化事件
 		useEventBus().on("graphics:lockRole:change", ({ lockRole }: { lockRole: boolean }) => {
-			console.log("[视角设置] 接收到视角锁定变化事件:", lockRole);
 			this.isLockingRoleFromSetting = lockRole;
 		});
 
 		useEventBus().on("graphics:turnFocus:change", ({ enable }: { enable: boolean }) => {
-			console.log("[相机] 接收到回合切换聚焦设置变化:", enable);
 			this.isTurnFocusEnabled = enable;
 			if (enable) {
 				const currentPlayerId = useGameData().currentPlayerIdInRound;
@@ -1204,7 +1189,6 @@ export class GameRenderer {
 
 		// 监听模型动画变化事件
 		useEventBus().on("graphics:animation:change", ({ enable }: { enable: boolean }) => {
-			console.log("[动画设置] 接收到模型动画变化事件:", enable);
 			this.applyModelAnimationSetting(enable);
 		});
 
@@ -1215,7 +1199,6 @@ export class GameRenderer {
 
 		// 监听窗口恢复焦点事件
 		useEventBus().on("window:focus-restored", () => {
-			console.log("[渲染器] 窗口恢复焦点，重新渲染场景");
 			this.reloadScene();
 		});
 
@@ -1399,7 +1382,6 @@ export class GameRenderer {
 		});
 		for (const key of ["level", "owner", "costList"]) {
 			useEventBus().on(`property-${key}`, async (propertyId: string) => {
-				console.log("🚀 ~ GameRenderer ~ initEventListener ~ property-${key}:", `${key} --- ${propertyId}`)
 				this.updateBuilding(useGameData().getPropertyById(propertyId)!);
 			});
 		}
@@ -2438,7 +2420,6 @@ export class GameRenderer {
 		this.updateCamera(this.controls, this.currentFocusModule, 8, 30);
 		this.controls.update();
 
-		console.log(`[相机] 相机已聚焦到 ${focusPlayerId === getCurrentClientPlayerId() ? "自己的" : "观战目标"} 视角`);
 	}
 
 	private createPopoverOnPlayerTop(
@@ -2866,9 +2847,6 @@ export class GameRenderer {
 	 * 应用新的像素比
 	 */
 	private applyPixelRatio(newPixelRatio: number) {
-		console.log("[画质设置] 应用像素比:", newPixelRatio);
-		console.log("[画质设置] 设置前 Canvas:", this.canvas.width, "x", this.canvas.height);
-
 		// 设置所有像素比
 		this.renderer.setPixelRatio(newPixelRatio);
 		this.composer.setPixelRatio(newPixelRatio);
@@ -2882,16 +2860,12 @@ export class GameRenderer {
 		this.popElementRenderer.setSize(this.container.clientWidth, this.container.clientHeight);
 		this.diceManager && this.diceManager.updateAspect(this.container.clientWidth / this.container.clientHeight);
 
-		console.log("[画质设置] 设置后 Canvas:", this.canvas.width, "x", this.canvas.height);
-		console.log("[画质设置] 像素比生效:", this.renderer.getPixelRatio());
 	}
 
 	/**
 	 * 应用阴影设置
 	 */
 	private applyShadowSetting(enable: boolean) {
-		console.log("[阴影设置] 应用阴影设置:", enable);
-
 		// 设置渲染器阴影开关
 		this.renderer.shadowMap.enabled = enable;
 
@@ -2911,7 +2885,6 @@ export class GameRenderer {
 			}
 		});
 
-		console.log("[阴影设置] 阴影设置已应用");
 	}
 
 	/**
@@ -2919,8 +2892,6 @@ export class GameRenderer {
 	 * 动态注册或注销所有已加载模型的动画
 	 */
 	private applyModelAnimationSetting(enable: boolean) {
-		console.log("[动画设置] 应用模型动画设置:", enable ? "开启" : "关闭");
-
 		const mapData = useMapData();
 
 		for (const mapItem of mapData.mapItems) {
@@ -2948,7 +2919,6 @@ export class GameRenderer {
 			}
 		}
 
-		console.log("[动画设置] 模型动画设置已应用");
 	}
 }
 

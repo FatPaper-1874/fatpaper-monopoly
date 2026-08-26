@@ -45,7 +45,6 @@ export function initAutoSound() {
 			hasFirstInteraction = true;
 			// 淡入背景音乐
 			audio.fadeInBGM(2);
-			console.log("[音效系统] 背景音乐已自动播放");
 		}
 	}
 
@@ -61,7 +60,6 @@ export function initAutoSound() {
 			audio.fadeInBGM(2);
 			const volumeConfig = audio.getVolumeConfig();
 			const isMuted = volumeConfig.muted || volumeConfig.masterMuted || volumeConfig.bgmMuted;
-			console.log(`[音效系统] Electron 环境 - 背景音乐已启动${isMuted ? "（静音中，音量为0）" : ""}`);
 			hasFirstInteraction = true;
 		}, 500);
 	}
@@ -146,5 +144,4 @@ export function initAutoSound() {
 		);
 	}
 
-	console.log(`[音效系统] 全局按钮音效已启用 (${isElectron ? "Electron" : "Web"}环境)`);
 }

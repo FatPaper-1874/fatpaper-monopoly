@@ -95,12 +95,9 @@ onMounted(() => {
 		// 捕获 checkForUpdate 的错误，避免被 unhandledrejection 捕获
 		window.updateAPI.checkForUpdate().catch((err) => {
 			// 错误会通过 onUpdateStatus 事件处理，这里只需要捕获避免未处理
-			console.log("[Update Check]: 检查更新完成（无新版本或出错）");
 		});
 
 		removeListener = window.updateAPI.onUpdateStatus((data: any) => {
-			console.log("[Updater]", data);
-
 			switch (data.status) {
 				case "available":
 					status.value = "available";

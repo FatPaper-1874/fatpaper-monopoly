@@ -106,13 +106,6 @@ export class AIManager {
 			...request,
 			strategyState,
 		};
-		console.log(`${AI_LOG_PREFIX} strategy state`, {
-			decisionId: getDecisionId(enrichedRequest),
-			playerId: enrichedRequest.playerId,
-			operationType: enrichedRequest.operationType,
-			scene: enrichedRequest.scene,
-			strategyState,
-		});
 		return await this.provider.decide(enrichedRequest);
 	}
 

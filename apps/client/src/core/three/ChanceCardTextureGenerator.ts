@@ -49,8 +49,6 @@ export class ChanceCardTextureGenerator {
 			const container = this.ensureRenderContainer();
 			const tRender = performance.now();
 			const canvas = await this.renderComponentToCanvas(container, card, iconUrl);
-			console.log(`[机会卡性能] renderToCanvas (${card.name}): ${(performance.now() - tRender).toFixed(1)}ms`);
-
 			// 2. 创建Three.js纹理
 			const texture = new THREE.CanvasTexture(canvas);
 			texture.colorSpace = THREE.SRGBColorSpace;
@@ -181,8 +179,6 @@ export class ChanceCardTextureGenerator {
 							transformOrigin: "top left",
 						},
 					});
-					console.log(`[机会卡性能]   html-to-image toCanvas: ${(performance.now() - tToCanvas).toFixed(1)}ms`);
-
 					resolve(canvas);
 				} catch (error) {
 					reject(error);
@@ -259,7 +255,6 @@ export class ChanceCardTextureGenerator {
 
 				try {
 					await this.generateTexture(card, iconUrl);
-					console.log(`[ChanceCardTextureGenerator] 预加载进度: ${completed + 1}/${total} - ${card.name}`);
 				} catch (error) {
 					console.error(`[ChanceCardTextureGenerator] 预加载失败: ${card.name}`, error);
 				}
@@ -275,7 +270,6 @@ export class ChanceCardTextureGenerator {
 		);
 		await Promise.all(workers);
 
-		console.log(`[ChanceCardTextureGenerator] 预加载 ${total} 个纹理完成`);
 	}
 
 	/**

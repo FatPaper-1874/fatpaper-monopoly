@@ -977,25 +977,6 @@ function getDecisionTraceId(request: AIDecisionRequest): string {
 	return typeof traceId === "string" && traceId ? traceId : "unknown";
 }
 
-function redactHeaders(headers: Record<string, string>): Record<string, string> {
-	const nextHeaders = { ...headers };
-	if (nextHeaders.Authorization) {
-		nextHeaders.Authorization = "Bearer ***";
-	}
-	if (nextHeaders["x-api-key"]) {
-		nextHeaders["x-api-key"] = "***";
-	}
-	return nextHeaders;
-}
-
-function tryParseJson(text: string): unknown {
-	try {
-		return JSON.parse(text);
-	} catch {
-		return text;
-	}
-}
-
 function normalizeTokenCount(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -1046,61 +1027,6 @@ function extractUsage(provider: AIRemoteLLMProviderKind, data: unknown): RemoteU
 	}
 }
 
-function logRemoteRequest(request: AIDecisionRequest, remoteRequest: ReturnType<typeof buildRemoteRequest>): void {
-	const traceId = getDecisionTraceId(request);
-	console.groupCollapsed(`[AI Remote] request ${traceId} ${request.title}`);
-	console.log("requestMeta", {
-		traceId,
-		provider: remoteRequest.provider,
-		url: remoteRequest.url,
-		operationType: request.operationType,
-		scene: request.scene,
-		playerId: request.playerId,
-	});
-	console.log("headers", redactHeaders(remoteRequest.headers));
-	console.log("body", tryParseJson(remoteRequest.body));
-	console.log("prompt", remoteRequest.prompt);
-	console.groupEnd();
-}
-
-function logRemoteResponse(
-	request: AIDecisionRequest,
-	remoteRequest: ReturnType<typeof buildRemoteRequest>,
-	data: unknown,
-	content: string,
-	selection: AIDecisionSelection,
-	usage?: RemoteUsage,
-): void {
-	const traceId = getDecisionTraceId(request);
-	console.groupCollapsed(`[AI Remote] response ${traceId} ${request.title}`);
-	console.log("responseMeta", {
-		traceId,
-		provider: remoteRequest.provider,
-		playerId: request.playerId,
-	});
-	console.log("rawResponse", data);
-	if (usage) {
-		console.log("usage", usage);
-	}
-	console.log("assistantText", content);
-	console.log("selection", selection);
-	console.groupEnd();
-}
-
-function logRemoteFailure(request: AIDecisionRequest, remoteRequest: ReturnType<typeof buildRemoteRequest>, error: unknown): void {
-	const traceId = getDecisionTraceId(request);
-	console.groupCollapsed(`[AI Remote] error ${traceId} ${request.title}`);
-	console.log("requestMeta", {
-		traceId,
-		provider: remoteRequest.provider,
-		url: remoteRequest.url,
-		playerId: request.playerId,
-	});
-	console.log("headers", redactHeaders(remoteRequest.headers));
-	console.log("body", tryParseJson(remoteRequest.body));
-	console.error("error", error);
-	console.groupEnd();
-}
 
 function extractTextContent(content: string | Array<{ type?: string; text?: string }> | undefined): string {
 	if (typeof content === "string") {
@@ -1360,7 +1286,6 @@ class RemoteAIDecisionProvider implements AIDecisionProvider {
 		const timeoutMs = this.config.timeoutMs ?? 30000;
 		const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 		const remoteRequest = buildRemoteRequest(this.config, request);
-		logRemoteRequest(request, remoteRequest);
 
 		try {
 			const response = await fetch(remoteRequest.url, {
@@ -1398,11 +1323,9 @@ class RemoteAIDecisionProvider implements AIDecisionProvider {
 				timestamp: Date.now(),
 				usageAvailable: Boolean(usage),
 			});
-			logRemoteResponse(request, remoteRequest, data, content, selection, usage);
 			return selection;
 		} catch (error) {
-			logRemoteFailure(request, remoteRequest, error);
-			console.warn(`[AI Remote:${remoteRequest.provider}] request failed`, error);
+			console.error(`[AI Remote:${remoteRequest.provider}] request failed`, error);
 			return {};
 		} finally {
 			clearTimeout(timeoutId);

@@ -484,7 +484,6 @@ window.addEventListener("unhandledrejection", (event) => {
 
 	// 检查是否已被 axios 拦截器处理
 	if (reason && reason[AXIOS_HANDLED_ERROR]) {
-		console.log("[Axios Handled]: 错误已在 axios 拦截器中处理");
 		event.preventDefault();
 		return;
 	}

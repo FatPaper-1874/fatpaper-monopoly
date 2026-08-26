@@ -303,7 +303,6 @@ export class MonopolyClient {
 				});
 			},
 		};
-		console.info("[MM_TEST] 控制台测试 API 已就绪", (window as any).__MM_TEST__.help);
 	}
 
 	public requestSave(): void { this.session.requestSave(); }
@@ -405,7 +404,6 @@ function destoryMonopolyClient() {
 	try {
 		MonopolyClient.getInstance() && MonopolyClient.destoryInstance();
 	} catch (e) {
-		console.log(e);
 	}
 }
 

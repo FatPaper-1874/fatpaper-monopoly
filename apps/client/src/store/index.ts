@@ -308,7 +308,6 @@ export const useSettig = defineStore("setting", {
 				this.graphicQuality = "low";
 				this.enableShadow = false;
 				this.enableModelAnimation = false;
-				console.log("[画质设置] 移动端强制 low，关闭阴影和模型动画");
 				return;
 			}
 
@@ -316,12 +315,10 @@ export const useSettig = defineStore("setting", {
 				const saved = localStorage.getItem("graphicQuality");
 				if (saved && (saved === "low" || saved === "medium" || saved === "high")) {
 					this.graphicQuality = saved;
-					console.log("[画质设置] 从 localStorage 读取画质设置:", saved);
 				} else {
 					// 自动检测：根据 CPU 核心数
 					const cores = navigator.hardwareConcurrency || 4;
 					this.graphicQuality = cores <= 4 ? "low" : "medium";
-					console.log("[画质设置] 自动检测画质:", this.graphicQuality, "(CPU 核心数:", cores, ")");
 				}
 			} catch (e) {
 				// localStorage 失败，回退到自动检测

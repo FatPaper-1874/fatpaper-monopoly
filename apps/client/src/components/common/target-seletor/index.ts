@@ -22,7 +22,6 @@ export async function showTargetSelector(
 			timeoutId: option?.timeoutId,
 		})
 			.then(() => {
-				console.log("🚀 ~ showTargetSelector ~ targetSelectedIdList:", targetSelectedIdList);
 				resolve(targetSelectedIdList);
 			})
 			.catch(() => {

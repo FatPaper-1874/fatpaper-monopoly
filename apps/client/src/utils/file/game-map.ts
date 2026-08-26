@@ -258,7 +258,6 @@ export async function loadGameMapFromFile(file: ArrayBuffer) {
 		mapData = await loadFromProto(bytes);
 	}
 
-	console.log("🚀 ~ loadGameMapFromFile ~ mapData:", mapData);
 	const gameMap = normalizeAndValidateGameMap(JSON.parse(mapData.jsonData) as GameMap);
 	useMapData().$patch(gameMap);
 	await loadMapDataToResourceStore(mapData);
