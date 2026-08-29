@@ -40,6 +40,7 @@ const iconUrl = computed(() => {
 <style scoped lang="scss">
 .arrived-event-info {
 	display: flex;
+	max-width: 30rem;
 	flex-direction: column;
 	justify-content: space-around;
 	align-items: center;
