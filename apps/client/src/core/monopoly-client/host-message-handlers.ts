@@ -32,7 +32,7 @@ import useEventBus from "@src/utils/event-bus";
 import { createVNode } from "vue";
 import PropertyInfoVue from "@src/components/common/property-card.vue";
 import { useGameData, useMapData, useResourceStore } from "@src/store/game";
-import { getCurrentClientPlayerId } from "@src/store/local-party";
+import { getCurrentClientPlayerId, useLocalParty } from "@src/store/local-party";
 import { GameMap } from "@mine-monopoly/utils/protos/game-map";
 import { loadGameMapFromFile, loadGameMapFromServer } from "@src/utils/file/game-map";
 import { base64ToArrayBuffer } from "@mine-monopoly/utils";
@@ -600,6 +600,14 @@ const handleRoundTimeOut: ServerMessageHandler<SocketMsgType.RoundTimeOut> = (ms
 		utilStore.showCountdown = false; // 超时后不显示倒计时
 		// 将剩余时间设置为 0，确保 UI 正确更新
 		utilStore.waitingFor = { ...utilStore.waitingFor, remainingTime: 0 };
+		useEventBus().emit(GameEventType.TimeOut, { timeoutId });
+		return;
+	}
+
+	// 派对模式下，交互弹窗目标玩家不是当前接管者时，超时只关闭对应弹窗，不影响回合状态。
+	const localParty = useLocalParty();
+	if (timeoutId && localParty.dialogTimeoutOwners[timeoutId] === playerId) {
+		delete localParty.dialogTimeoutOwners[timeoutId];
 		useEventBus().emit(GameEventType.TimeOut, { timeoutId });
 	}
 };

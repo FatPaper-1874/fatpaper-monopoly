@@ -15,6 +15,10 @@ export const useLocalParty = defineStore("local-party", {
 		/** 正等待交接确认的真人 ID。 */
 		handoffPlayerId: "",
 		handoffVisible: false,
+		/** 是否有等待交接后投递的交互弹窗（对话类消息被切换到目标玩家时置位）。 */
+		hasPendingInteraction: false,
+		/** 进行中的交互弹窗：timeoutId -> 弹窗目标玩家 ID。 */
+		dialogTimeoutOwners: {} as Record<string, string>,
 	}),
 	getters: {
 		activePlayerName: (state) => {
@@ -31,6 +35,8 @@ export const useLocalParty = defineStore("local-party", {
 			this.currentTurnPlayerId = "";
 			this.handoffPlayerId = "";
 			this.handoffVisible = false;
+			this.hasPendingInteraction = false;
+			this.dialogTimeoutOwners = {};
 		},
 		setPlayers(players: LocalPartyPlayer[]) {
 			this.players = players;
@@ -46,6 +52,8 @@ export const useLocalParty = defineStore("local-party", {
 			const changed = this.currentTurnPlayerId !== playerId;
 			this.currentTurnPlayerId = playerId;
 			if (!isHuman) {
+				// 交互弹窗触发的交接不能被 AI 回合数据清掉，否则弹窗无法交接给目标玩家。
+				if (this.hasPendingInteraction) return;
 				this.activePlayerId = "";
 				this.handoffPlayerId = "";
 				this.handoffVisible = false;
@@ -72,6 +80,8 @@ export const useLocalParty = defineStore("local-party", {
 			this.currentTurnPlayerId = "";
 			this.handoffPlayerId = "";
 			this.handoffVisible = false;
+			this.hasPendingInteraction = false;
+			this.dialogTimeoutOwners = {};
 		},
 	},
 });

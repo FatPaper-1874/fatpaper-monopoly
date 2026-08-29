@@ -52,11 +52,32 @@ const PLAYER_ACTION_TYPES = new Set<SocketMsgType>([
 	SocketMsgType.MapPathChoiceRequest,
 ]);
 
+/** 需要玩家应答、会阻塞 worker 的交互弹窗消息。目标玩家不是当前接管者时必须交接后再投递。 */
+const INTERACTION_DIALOG_TYPES = new Set<SocketMsgType>([
+	SocketMsgType.ConfirmDialog,
+	SocketMsgType.FormDialog,
+	SocketMsgType.TargetSelectDialog,
+	SocketMsgType.ItemSelectDialog,
+]);
+
+/** 结果类操作：按 timeoutId 反查弹窗归属玩家，避免交接切换后结果被错误归属。 */
+const DIALOG_RESULT_OPERATE_TYPES = new Set<OperateType>([
+	OperateType.ConfirmDialogResult,
+	OperateType.FormDialogResult,
+	OperateType.TargetSelectDialogResult,
+	OperateType.ItemSelectDialogResult,
+]);
+
 export class LocalPartySession {
 	private room: Room;
 	private readonly connections = new Map<string, DataConnection>();
 	private readonly recentBroadcastKeys = new Map<string, number>();
 	private readonly players = new Map<string, LocalPartyPlayer>();
+	/** 等待交接确认后投递的交互弹窗消息队列。 */
+	private readonly pendingInteractions: Array<{ recipientId: string; message: ServerSocketMessage }> = [];
+	/** 上一帧 handoffPlayerId，用于通过 store 订阅识别交接确认。 */
+	private lastHandoffPlayerId = "";
+	private unsubscribeStore: (() => void) | null = null;
 	private pendingMapLoad:
 		| { resolve: () => void; reject: (reason: Error) => void; timer: number }
 		| null = null;
@@ -66,6 +87,15 @@ export class LocalPartySession {
 		private readonly onMessage: (message: ServerSocketMessage) => void,
 	) {
 		this.room = new Room(roomId, { localParty: true });
+		this.unsubscribeStore = useLocalParty().$subscribe(() => {
+			const localParty = useLocalParty();
+			const prevHandoffPlayerId = this.lastHandoffPlayerId;
+			this.lastHandoffPlayerId = localParty.handoffPlayerId;
+			if (prevHandoffPlayerId && !localParty.handoffPlayerId) {
+				// 交接确认：控制权已转移到 activePlayerId，投递属于该玩家的交互弹窗。
+				this.flushPendingInteractions(localParty.activePlayerId);
+			}
+		});
 	}
 
 	public static async create(defaultName: string, onMessage: (message: ServerSocketMessage) => void): Promise<LocalPartySession> {
@@ -231,6 +261,9 @@ export class LocalPartySession {
 
 	public destroy(): void {
 		this.rejectPendingMapLoad(new Error("本地派对会话已关闭"));
+		this.unsubscribeStore?.();
+		this.unsubscribeStore = null;
+		this.clearPendingInteractions();
 		this.room.destory();
 		this.connections.clear();
 		this.players.clear();
@@ -268,6 +301,7 @@ export class LocalPartySession {
 		const operateType = message.data?.operateType as OperateType;
 		const data = message.data?.data;
 		const extra = message.extra;
+		const localParty = useLocalParty();
 		if (operateType === OperateType.GameInitFinished) {
 			// 本地派对会把一次页面初始化确认扩展为所有真人玩家的确认。
 			// 每个玩家都必须携带独立的 messageId，否则 Worker 会把后续确认判定为重复消息。
@@ -281,7 +315,13 @@ export class LocalPartySession {
 			this.resolvePendingMapLoad();
 			return;
 		}
-		const playerId = operateType === OperateType.PauseGame || operateType === OperateType.ResumeGame ? this.room.getOwnerId() : defaultPlayerId;
+		let playerId = operateType === OperateType.PauseGame || operateType === OperateType.ResumeGame ? this.room.getOwnerId() : defaultPlayerId;
+		if (DIALOG_RESULT_OPERATE_TYPES.has(operateType) && typeof data?.timeoutId === "string") {
+			// 弹窗结果按 timeoutId 归属到弹窗目标玩家；交接切换导致接管者变化时仍能送回正确的 worker 监听。
+			const dialogOwner = localParty.dialogTimeoutOwners[data.timeoutId];
+			if (dialogOwner) playerId = dialogOwner;
+			delete localParty.dialogTimeoutOwners[data.timeoutId];
+		}
 		if (playerId) this.room.emitOperation(playerId, operateType, data, extra);
 	}
 
@@ -302,7 +342,12 @@ export class LocalPartySession {
 		}
 		const localParty = useLocalParty();
 		const intendedPlayerId = localParty.activePlayerId || localParty.handoffPlayerId;
-		if (PLAYER_ACTION_TYPES.has(message.type) && recipientId !== intendedPlayerId) return;
+		if (PLAYER_ACTION_TYPES.has(message.type) && recipientId !== intendedPlayerId) {
+			// 交互弹窗不能静默丢弃：切换交接给目标玩家，确认后投递，否则 worker 只能等超时拿默认值。
+			if (INTERACTION_DIALOG_TYPES.has(message.type)) this.queueInteraction(recipientId, message);
+			return;
+		}
+		if (INTERACTION_DIALOG_TYPES.has(message.type)) this.trackDialogOwner(message, recipientId);
 		if (BROADCAST_TYPES.has(message.type) && this.isDuplicateBroadcast(message)) return;
 		if (!BROADCAST_TYPES.has(message.type) && !PLAYER_ACTION_TYPES.has(message.type) && recipientId !== this.getPreferredReceiverId()) return;
 		this.onMessage(message);
@@ -347,7 +392,56 @@ export class LocalPartySession {
 			playerId = message.data as string;
 		}
 		if (!playerId) return;
-		useLocalParty().setTurn(playerId, this.players.has(playerId), forceHandoff);
+		const localParty = useLocalParty();
+		if (localParty.currentTurnPlayerId && localParty.currentTurnPlayerId !== playerId) {
+			// 回合已切换，说明此前等待的交互弹窗已被 worker 超时跳过，丢弃避免过期弹窗再次交接。
+			this.clearPendingInteractions();
+		}
+		localParty.setTurn(playerId, this.players.has(playerId), forceHandoff);
+	}
+
+	private queueInteraction(recipientId: string, message: ServerSocketMessage): void {
+		this.trackDialogOwner(message, recipientId);
+		this.pendingInteractions.push({ recipientId, message });
+		const localParty = useLocalParty();
+		localParty.hasPendingInteraction = true;
+		// 没有待确认的交接时立即把控制权交给弹窗目标玩家；已有交接则等其确认后由 flush 推进。
+		if (!localParty.handoffVisible) localParty.setTurn(recipientId, true, true);
+	}
+
+	private flushPendingInteractions(activePlayerId: string): void {
+		const remaining: Array<{ recipientId: string; message: ServerSocketMessage }> = [];
+		for (const item of this.pendingInteractions) {
+			if (item.recipientId !== activePlayerId) {
+				remaining.push(item);
+				continue;
+			}
+			this.trackDialogOwner(item.message, item.recipientId);
+			this.onMessage(item.message);
+		}
+		this.pendingInteractions.length = 0;
+		this.pendingInteractions.push(...remaining);
+		useLocalParty().hasPendingInteraction = this.pendingInteractions.length > 0;
+		// 队列里还有其他玩家的弹窗时，继续发起下一次交接。
+		const next = this.pendingInteractions[0];
+		if (next && !useLocalParty().handoffVisible) useLocalParty().setTurn(next.recipientId, true, true);
+	}
+
+	private clearPendingInteractions(): void {
+		if (!this.pendingInteractions.length) return;
+		this.pendingInteractions.length = 0;
+		useLocalParty().hasPendingInteraction = false;
+	}
+
+	private trackDialogOwner(message: ServerSocketMessage, recipientId: string): void {
+		const timeoutId = (message.data as any)?.timeoutId;
+		if (typeof timeoutId !== "string" || !timeoutId) return;
+		const localParty = useLocalParty();
+		const owners = localParty.dialogTimeoutOwners;
+		if (Object.keys(owners).length > 100) {
+			for (const key of Object.keys(owners)) delete owners[key];
+		}
+		owners[timeoutId] = recipientId;
 	}
 
 	private isCustomMapRiskPrompt(message: ServerSocketMessage): boolean {
