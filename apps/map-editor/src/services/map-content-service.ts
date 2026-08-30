@@ -16,6 +16,11 @@ import { AddPhaseSchema, RemovePhaseSchema, UpdatePhaseSchema, type PhaseType } 
 import { GamePhaseMark } from "@mine-monopoly/types";
 import { UpdateExtraLibsSchema } from "./validators/extra-libs-validators";
 import { AddPropertySchema, UpdatePropertySchema, RemovePropertySchema, type PropertyData, type UpdatePropertyInput } from "./validators/property-validators";
+import { AddMapItemSchema, UpdateMapItemSchema, RemoveMapItemSchema, LinkMapEventSchema, LinkMapItemsSchema, UnlinkMapItemSchema, type AddMapItemInput, type UpdateMapItemInput, type LinkMapEventInput, type LinkMapItemsInput, type UnlinkMapItemInput } from "./validators/map-item-validators";
+import { AddMapItemTypeSchema, UpdateMapItemTypeSchema, RemoveMapItemTypeSchema, GetMapItemTypeSchema, type AddMapItemTypeInput, type UpdateMapItemTypeInput } from "./validators/map-item-type-validators";
+import { generateMapItemId } from "@src/utils/map-item-id";
+import { randomHEXColor } from "@mine-monopoly/utils";
+import type { MapItem, MapItemType } from "@mine-monopoly/types";
 import type { ChanceCard } from "./validators/chance-card-validators";
 import type { Role } from "./validators/role-validators";
 import type { MapEvent } from "./validators/map-event-validators";
@@ -690,6 +695,234 @@ export class MapContentService {
 			throw new Error(`MapItem 不存在: ${mapItemId}`);
 		}
 		return item;
+	}
+
+	/**
+	 * MapItem Write Operations
+	 */
+
+	/**
+	 * Add a map item by typeId
+	 * @param data - typeId / x / y / rotation
+	 * @returns The created map item
+	 */
+	addMapItem(data: AddMapItemInput): any {
+		const { typeId, x, y, rotation } = AddMapItemSchema.parse(data);
+		const mapDataStore = useMapDataStore();
+		const itemType = mapDataStore.findMapItemTypeById(typeId);
+		if (!itemType) {
+			throw new Error(`MapItemType 不存在: ${typeId}`);
+		}
+		if (mapDataStore.hasMapItemRepeatCoord(x, y)) {
+			throw new Error(`坐标 (${x}, ${y}) 已被其他地图项占用`);
+		}
+		const newMapItem: MapItem = {
+			id: generateMapItemId(),
+			x,
+			y,
+			rotation,
+			type: JSON.parse(JSON.stringify(itemType)),
+		};
+		mapDataStore.addMapItem(newMapItem);
+		eventBus.emit("map-item-added", newMapItem.id);
+		return newMapItem;
+	}
+
+	/**
+	 * Update a map item's position / rotation
+	 * @param data - mapItemId and at least one of x / y / rotation
+	 * @returns The updated map item
+	 */
+	updateMapItem(data: UpdateMapItemInput): any {
+		const { mapItemId, x, y, rotation } = UpdateMapItemSchema.parse(data);
+		const mapDataStore = useMapDataStore();
+		const item = mapDataStore.findMapItemById(mapItemId);
+		if (!item) {
+			throw new Error(`MapItem 不存在: ${mapItemId}`);
+		}
+		const targetX = x ?? item.x;
+		const targetY = y ?? item.y;
+		if (targetX !== item.x || targetY !== item.y) {
+			const occupied = mapDataStore.mapItems.some(
+				(other) => other.id !== mapItemId && other.x === targetX && other.y === targetY,
+			);
+			if (occupied) {
+				throw new Error(`目标坐标 (${targetX}, ${targetY}) 已被其他地图项占用`);
+			}
+		}
+		mapDataStore.updateMapItem(mapItemId, { x: targetX, y: targetY, ...(rotation !== undefined ? { rotation } : {}) });
+		// store.updateMapItem 只通知路径更新，这里补发渲染器同步事件（与 batchMoveMapItem 行为一致）
+		eventBus.emit("map-item-updated", mapItemId);
+		return mapDataStore.findMapItemById(mapItemId);
+	}
+
+	/**
+	 * Remove a map item（级联解绑 linkto、删除关联路径、清理起点）
+	 * @param mapItemId - The map item ID
+	 */
+	removeMapItem(mapItemId: string): { success: boolean } {
+		RemoveMapItemSchema.parse({ mapItemId });
+		const mapDataStore = useMapDataStore();
+		if (!mapDataStore.findMapItemById(mapItemId)) {
+			throw new Error(`MapItem 不存在: ${mapItemId}`);
+		}
+		mapDataStore.removeMapItem(mapItemId);
+		return { success: true };
+	}
+
+	/**
+	 * Bind / unbind a map event to a map item
+	 * @param data - mapItemId and optional mapEventId（省略时解除绑定）
+	 */
+	linkMapEvent(data: LinkMapEventInput): { success: boolean; mapItemId: string; mapEventId: string | null } {
+		const { mapItemId, mapEventId } = LinkMapEventSchema.parse(data);
+		const mapDataStore = useMapDataStore();
+		if (!mapDataStore.findMapItemById(mapItemId)) {
+			throw new Error(`MapItem 不存在: ${mapItemId}`);
+		}
+		if (mapEventId && !mapDataStore.findMapEventById(mapEventId)) {
+			throw new Error(`MapEvent 不存在: ${mapEventId}`);
+		}
+		mapDataStore.linkMapEvent(mapItemId, mapEventId);
+		return { success: true, mapItemId, mapEventId: mapEventId ?? null };
+	}
+
+	/**
+	 * Link two map items（source.linkto → target.beLinked，target 成为持有 property 的地皮主体）
+	 * @param data - sourceId / targetId
+	 */
+	linkMapItems(data: LinkMapItemsInput): { success: boolean; sourceId: string; targetId: string } {
+		const { sourceId, targetId } = LinkMapItemsSchema.parse(data);
+		const mapDataStore = useMapDataStore();
+		const source = mapDataStore.findMapItemById(sourceId);
+		const target = mapDataStore.findMapItemById(targetId);
+		if (!source) {
+			throw new Error(`MapItem 不存在: ${sourceId}`);
+		}
+		if (!target) {
+			throw new Error(`MapItem 不存在: ${targetId}`);
+		}
+		// store.linkToMapItem 只校验目标方，这里补校验发起方，避免旧目标残留悬空的 beLinked
+		if (source.linkto || source.beLinked) {
+			throw new Error(`地图项 ${sourceId} 已处于绑定状态`);
+		}
+		mapDataStore.linkToMapItem(sourceId, targetId);
+		return { success: true, sourceId, targetId };
+	}
+
+	/**
+	 * Unbind a map item's link（从任一方发起均双向解绑；被解绑地皮主体上的 property 会被一并清除）
+	 * @param mapItemId - The map item ID（绑定关系中的任意一方）
+	 */
+	unlinkMapItem(mapItemId: string): { success: boolean } {
+		UnlinkMapItemSchema.parse({ mapItemId });
+		const mapDataStore = useMapDataStore();
+		if (!mapDataStore.findMapItemById(mapItemId)) {
+			throw new Error(`MapItem 不存在: ${mapItemId}`);
+		}
+		mapDataStore.unLinkMapItem(mapItemId);
+		return { success: true };
+	}
+
+	/**
+	 * MapItemType Operations
+	 */
+
+	/**
+	 * List all map item types with usage count
+	 */
+	listMapItemTypes(): any[] {
+		const mapDataStore = useMapDataStore();
+		return mapDataStore.mapItemTypes.map((itemType) => ({
+			id: itemType.id,
+			name: itemType.name,
+			modelId: itemType.modelId,
+			color: itemType.color,
+			size: itemType.size,
+			usageCount: mapDataStore.mapItems.filter((item) => item.type.id === itemType.id).length,
+		}));
+	}
+
+	/**
+	 * Get a single map item type with usage count
+	 */
+	getMapItemType(typeId: string): any {
+		const mapDataStore = useMapDataStore();
+		const itemType = mapDataStore.findMapItemTypeById(typeId);
+		if (!itemType) {
+			throw new Error(`MapItemType 不存在: ${typeId}`);
+		}
+		return {
+			...itemType,
+			usageCount: mapDataStore.mapItems.filter((item) => item.type.id === typeId).length,
+		};
+	}
+
+	/**
+	 * Add a map item type
+	 * @param data - name / modelId / color? / size?
+	 * @returns The created map item type
+	 */
+	addMapItemType(data: AddMapItemTypeInput): any {
+		const { name, modelId, color, size } = AddMapItemTypeSchema.parse(data);
+		const resourceStore = useResourceStore();
+		if (!resourceStore.models.some((m) => m.id === modelId)) {
+			throw new Error(`模型资源不存在: ${modelId}，请先通过 list_models 核验`);
+		}
+		const newMapItemType: MapItemType = {
+			id: generateShortId("map-item-type"),
+			name,
+			modelId,
+			color: color ?? randomHEXColor(),
+			size: size ?? 1,
+		};
+		useMapDataStore().addMapItemType(newMapItemType);
+		return newMapItemType;
+	}
+
+	/**
+	 * Update a map item type and sync all placed map items' type copies
+	 * @param data - typeId and at least one of name / modelId / color / size
+	 * @returns The updated type and the number of affected map items
+	 */
+	updateMapItemType(data: UpdateMapItemTypeInput): any {
+		const { typeId, ...updates } = UpdateMapItemTypeSchema.parse(data);
+		const mapDataStore = useMapDataStore();
+		const itemType = mapDataStore.findMapItemTypeById(typeId);
+		if (!itemType) {
+			throw new Error(`MapItemType 不存在: ${typeId}`);
+		}
+		if (updates.modelId && !useResourceStore().models.some((m) => m.id === updates.modelId)) {
+			throw new Error(`模型资源不存在: ${updates.modelId}，请先通过 list_models 核验`);
+		}
+		Object.assign(itemType, updates);
+		// MapItem.type 存的是类型副本，需同步已放置的地图项
+		const affectedItems = mapDataStore.mapItems.filter((item) => item.type.id === typeId);
+		affectedItems.forEach((item) => {
+			Object.assign(item.type, updates);
+		});
+		eventBus.emit("map-item-type-updated", typeId);
+		return { ...itemType, affectedCount: affectedItems.length };
+	}
+
+	/**
+	 * Remove a map item type（级联删除使用该类型的所有地图项）
+	 * @param typeId - The map item type ID
+	 */
+	removeMapItemType(typeId: string): { success: boolean; removedCount: number } {
+		GetMapItemTypeSchema.parse({ typeId });
+		const mapDataStore = useMapDataStore();
+		const itemType = mapDataStore.findMapItemTypeById(typeId);
+		if (!itemType) {
+			throw new Error(`MapItemType 不存在: ${typeId}`);
+		}
+		const removedCount = mapDataStore.mapItems.filter((item) => item.type.id === typeId).length;
+		mapDataStore.removeMapItemType(typeId);
+		// 清理可行走路径类型设置中对已删类型的引用
+		if (mapDataStore.pathMapItemTypeIds?.includes(typeId)) {
+			mapDataStore.setPathMapItemTypeIds(mapDataStore.pathMapItemTypeIds.filter((id) => id !== typeId));
+		}
+		return { success: true, removedCount };
 	}
 
 	/**

@@ -16,7 +16,9 @@ export type Events = {
 	"map-item-link": string;
 	"map-item-unlink": string;
 	"map-item-type-selected": string | undefined;
+	"map-item-type-updated": string;
 	"map-item-deleted": string;
+	"map-item-added": string;
 	"map-item-updated": string;
 	"map-event-link": string;
 	"map-event-unlink": string;

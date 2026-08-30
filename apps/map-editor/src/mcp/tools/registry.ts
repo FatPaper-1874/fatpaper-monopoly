@@ -7,6 +7,7 @@ import { getCodeTemplateTools } from "./get-code-template.js";
 import { getDefaultCodeTools } from "./get-default-code.js";
 import { mapEventTools } from "./map-events.js";
 import { mapItemTools } from "./map-items.js";
+import { mapItemTypeTools } from "./map-item-types.js";
 import { mapPathTools } from "./map-paths.js";
 import { mapChangeTools } from "./map-changes.js";
 import { modifierTemplateTools } from "./modifier-templates.js";
@@ -63,6 +64,7 @@ export const allTools: MCPToolDefinition[] = [
 	...withCategory("type-lib", typeLibsTools),
 	...withCategory("resource", resourceTools),
 	...withCategory("map-item", mapItemTools),
+	...withCategory("map-item", mapItemTypeTools),
 	...withCategory("map-path", mapPathTools),
 	...withCategory("map-change", mapChangeTools),
 	...withCategory("property", propertyTools),

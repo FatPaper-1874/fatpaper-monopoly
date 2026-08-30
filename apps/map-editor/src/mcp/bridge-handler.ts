@@ -44,6 +44,8 @@ const batchMutationTools = new Set<MCPToolName>([
 	"create_modifier_template", "update_modifier_template", "remove_modifier_template",
 	"update_extra_libs",
 	"add_map_path", "update_map_path", "remove_map_path", "replace_map_paths", "update_map_path_settings",
+	"add_map_item", "update_map_item", "remove_map_item", "link_map_event", "link_map_items", "unlink_map_item",
+	"add_map_item_type", "update_map_item_type", "remove_map_item_type",
 ]);
 
 /**
@@ -297,6 +299,69 @@ export async function handleToolInvocation(toolName: MCPToolName, args: any): Pr
 
 			case "get_map_item": {
 				result = toPlain(mapContentService.getMapItem(args.mapItemId));
+				break;
+			}
+
+			case "add_map_item": {
+				const serviceResult = mapContentService.addMapItem(args);
+				result = toPlain(serviceResult);
+				break;
+			}
+
+			case "update_map_item": {
+				const serviceResult = mapContentService.updateMapItem(args);
+				result = toPlain(serviceResult);
+				break;
+			}
+
+			case "remove_map_item": {
+				mapContentService.removeMapItem(args.mapItemId);
+				result = { success: true };
+				break;
+			}
+
+			case "link_map_event": {
+				result = toPlain(mapContentService.linkMapEvent(args));
+				break;
+			}
+
+			case "link_map_items": {
+				result = toPlain(mapContentService.linkMapItems(args));
+				break;
+			}
+
+			case "unlink_map_item": {
+				mapContentService.unlinkMapItem(args.mapItemId);
+				result = { success: true };
+				break;
+			}
+
+			// Map Item Type Tools
+			case "list_map_item_types": {
+				result = toPlain(mapContentService.listMapItemTypes());
+				break;
+			}
+
+			case "get_map_item_type": {
+				result = toPlain(mapContentService.getMapItemType(args.typeId));
+				break;
+			}
+
+			case "add_map_item_type": {
+				const serviceResult = mapContentService.addMapItemType(args);
+				result = toPlain(serviceResult);
+				break;
+			}
+
+			case "update_map_item_type": {
+				const serviceResult = mapContentService.updateMapItemType(args);
+				result = toPlain(serviceResult);
+				break;
+			}
+
+			case "remove_map_item_type": {
+				mapContentService.removeMapItemType(args.typeId);
+				result = { success: true };
 				break;
 			}
 

@@ -11,3 +11,5 @@ export * from "./game-phase-validators";
 export * from "./extra-libs-validators";
 export * from "./property-validators";
 export * from "./modifier-template-validators";
+export * from "./map-item-validators";
+export * from "./map-item-type-validators";

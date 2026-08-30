@@ -393,8 +393,27 @@ export class MapRenderer {
 			this.updatePreviewBox(itemTypeId);
 		});
 
+		this.onEvent("map-item-type-updated", async (typeId: string) => {
+			// 类型定义被修改（可能含 modelId），清缓存后重渲染使用该类型的地图项
+			this.itemTypesCache.delete(typeId);
+			const affectedItems = useMapDataStore().mapItems.filter((item) => item.type.id === typeId);
+			for (const mapItem of affectedItems) {
+				await this.rerenderMapItem(mapItem.id);
+			}
+			if (useEditorStore().currentMapItemTypeId === typeId) {
+				await this.updatePreviewBox(typeId);
+			}
+		});
+
 		this.onEvent("map-item-deleted", (mapItemId) => {
 			this.removeMapItem(mapItemId);
+		});
+
+		this.onEvent("map-item-added", async (mapItemId) => {
+			const mapItem = useMapDataStore().findMapItemById(mapItemId);
+			if (mapItem && !this.mapItemsInScene.has(mapItemId)) {
+				await this.renderMapItemToMap(mapItem);
+			}
 		});
 
 		this.onEvent("toggle-box-select-mode", () => {
