@@ -1,5 +1,18 @@
 # @mine-monopoly/map-editor
 
+## 1.3.1
+
+### Patch Changes
+
+- - **MCP 工具**
+    - 新增地图项管理工具：`add_map_item` / `update_map_item` / `remove_map_item`，支持放置、移动、旋转和删除地图项
+    - 新增地图项绑定工具：`link_map_event`（绑定/解绑地图事件）、`link_map_items` / `unlink_map_item`（地图项间地皮绑定与解除）
+    - 新增地图项类型管理工具：`list_map_item_types` / `get_map_item_type` / `add_map_item_type` / `update_map_item_type` / `remove_map_item_type`，支持管理类型名称、模型、颜色（#RRGGBB）与尺寸
+  - **编辑器核心**
+    - 新增 map-item 与 map-item-type 的 zod 校验器
+    - `map-content-service` 新增地图项及类型的完整服务层实现
+    - 渲染器监听 `map-item-added` / `map-item-type-updated` 事件，自动重渲染受影响的地图项并刷新预览框
+
 ## 1.3.0
 
 ### Minor Changes
