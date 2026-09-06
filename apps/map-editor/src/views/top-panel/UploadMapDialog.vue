@@ -156,7 +156,7 @@ async function syncChangelogFromServer(serverLogs: GameMapChangelogEntry[]) {
 	}
 }
 
-/** 清除当前项目与服务器地图的关联，作为全新地图上传 */
+/** 清除当前地图的 Server Map ID，后续上传将作为新地图处理 */
 async function clearServerMapLink() {
 	clearingLink.value = true;
 	try {
@@ -166,8 +166,8 @@ async function clearServerMapLink() {
 		if (versionStore.isDirFormat && versionStore.mapDir) {
 			await versionStore.saveCurrent("save: 清除 serverMapId 关联");
 		}
-		message.success("已清除关联，将作为新图上传");
-		await refreshInfo();
+		message.success("已清除 Server Map ID，后续将作为新图上传");
+		if (apiKey.value.trim()) await refreshInfo();
 	} finally {
 		clearingLink.value = false;
 	}
@@ -278,12 +278,29 @@ async function handleUpload() {
 				<a-button danger :disabled="!apiKey.trim()" @click="handleClearKey">清空 Key</a-button>
 			</a-space>
 
+			<a-alert v-if="mapDataStore.serverMapId" type="info" show-icon>
+				<template #message>
+					当前地图已关联 Server Map ID：
+					<a-typography-text :copyable="{ text: mapDataStore.serverMapId }">{{ mapDataStore.serverMapId }}</a-typography-text>
+				</template>
+				<template #action>
+					<a-popconfirm
+						title="确定清除当前地图的 Server Map ID 吗？"
+						description="清除后下次上传会作为新地图提交，无法再更新原地图。"
+						ok-text="清除"
+						cancel-text="取消"
+						@confirm="clearServerMapLink"
+					>
+						<a-button danger size="small" :loading="clearingLink">清除</a-button>
+					</a-popconfirm>
+				</template>
+			</a-alert>
+
 			<a-descriptions v-if="keyInfo" size="small" bordered :column="1">
 				<a-descriptions-item label="绑定用户">{{ keyInfo.username }}</a-descriptions-item>
 				<a-descriptions-item label="地图配额">{{ quotaText }}</a-descriptions-item>
 				<a-descriptions-item label="上传大小限制">{{ sizeLimitText }}</a-descriptions-item>
 				<a-descriptions-item label="今日剩余次数">{{ dailyUploadText }}</a-descriptions-item>
-				<a-descriptions-item label="Server Map ID">{{ mapDataStore.serverMapId || "首次上传后生成" }}</a-descriptions-item>
 			</a-descriptions>
 
 			<a-alert v-if="mapStatus" :type="currentStatus?.type ?? 'info'" show-icon>
@@ -299,10 +316,7 @@ async function handleUpload() {
 			</a-alert>
 
 			<a-alert v-if="mapLinkError" type="warning" show-icon>
-				<template #message>{{ mapLinkError }}</template>
-				<template #action>
-					<a-button size="small" :loading="clearingLink" @click="clearServerMapLink">清除关联，作为新图上传</a-button>
-				</template>
+				<template #message>{{ mapLinkError }}。可使用上方“清除”按钮解除关联后作为新图上传。</template>
 			</a-alert>
 
 			<a-progress v-if="uploading" :percent="uploadPercent" :status="uploadPercent >= 100 ? 'success' : 'active'" />
