@@ -1,5 +1,11 @@
 # @mine-monopoly/map-editor
 
+## 1.3.2
+
+### Patch Changes
+
+- - 新增地图上传关联管理：可在上传窗口查看、复制并清除当前地图的 Server Map ID；清除后可将后续上传作为新地图提交。
+
 ## 1.3.1
 
 ### Patch Changes
